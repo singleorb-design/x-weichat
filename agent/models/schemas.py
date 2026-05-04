@@ -1,9 +1,25 @@
-from typing import ClassVar, Literal
+from typing import ClassVar, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 JobStatus = Literal["pending", "running", "succeeded", "failed"]
+StageName = Literal[
+    "x-fetch",
+    "translate",
+    "review",
+    "route",
+    "light-polish",
+    "wechat-rewrite",
+    "final-check",
+    "targeted-fix",
+    "final-output",
+    "render-html",
+]
+RetryMode = Literal["failed-stage", "from-stage"]
+RouteDecisionName = Literal["PASS", "LIGHT_POLISH", "REWRITE"]
+RiskLevel = Literal["LOW", "MEDIUM", "HIGH"]
+StageProbeStatus = Literal["passed", "failed"]
 
 
 class StageResult(BaseModel):
@@ -56,14 +72,77 @@ class StageModelInfo(BaseModel):
         return normalized
 
 
+class StageProbeResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: StageProbeStatus
+    message: str
+    checked_at: str
+
+    @field_validator("message", "checked_at")
+    @classmethod
+    def validate_non_empty_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("StageProbeResult text fields must not be empty.")
+        return normalized
+
+
+class RouteDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: RouteDecisionName
+    reason: str
+    risk: RiskLevel
+    recommended_next_prompt: RouteDecisionName
+
+    @field_validator("reason")
+    @classmethod
+    def validate_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("RouteDecision reason must not be empty.")
+        return normalized
+
+
+class FinalCheckIssue(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: str
+    severity: RiskLevel
+    detail: str
+    fix_suggestion: str
+
+    @field_validator("type", "detail", "fix_suggestion")
+    @classmethod
+    def validate_issue_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("FinalCheckIssue text fields must not be empty.")
+        return normalized
+
+
+class FinalCheckResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    pass_: bool = Field(alias="pass")
+    risk: RiskLevel
+    fix_required: bool
+    issues: list[FinalCheckIssue] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_issue_consistency(self) -> "FinalCheckResult":
+        if self.pass_ and self.fix_required:
+            raise ValueError("FinalCheckResult pass=true must not require fixes.")
+        if self.pass_ and self.issues:
+            raise ValueError("FinalCheckResult pass=true must not include issues.")
+        if not self.pass_ and self.fix_required and not self.issues:
+            raise ValueError("FinalCheckResult fix_required=true requires at least one issue.")
+        return self
+
+
 class JobRecord(BaseModel):
-    ALLOWED_STAGES: ClassVar[tuple[str, ...]] = (
-        "x-fetch",
-        "translate",
-        "review",
-        "wechat-rewrite",
-        "render-html",
-    )
+    ALLOWED_STAGES: ClassVar[tuple[StageName, ...]] = get_args(StageName)
 
     job_id: str
     url: str
@@ -76,6 +155,7 @@ class JobRecord(BaseModel):
     prompt_versions: dict[str, str] = Field(default_factory=dict)
     stage_durations: dict[str, float] = Field(default_factory=dict)
     stage_errors: dict[str, StageError] = Field(default_factory=dict)
+    stage_probes: dict[str, StageProbeResult] = Field(default_factory=dict)
 
     @classmethod
     def _validate_stage_keys(cls, field_name: str, value: dict[str, object]) -> dict[str, object]:
@@ -110,6 +190,12 @@ class JobRecord(BaseModel):
     @classmethod
     def validate_stage_errors(cls, value: dict[str, StageError]) -> dict[str, StageError]:
         cls._validate_stage_keys("stage_errors", value)
+        return value
+
+    @field_validator("stage_probes")
+    @classmethod
+    def validate_stage_probes(cls, value: dict[str, StageProbeResult]) -> dict[str, StageProbeResult]:
+        cls._validate_stage_keys("stage_probes", value)
         return value
 
     @field_validator("current_stage")

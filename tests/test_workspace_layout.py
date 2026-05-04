@@ -1,4 +1,6 @@
 from pathlib import Path
+import os
+import subprocess
 
 
 def test_workspace_layout_exists() -> None:
@@ -70,3 +72,77 @@ def test_env_example_contains_required_configuration_keys() -> None:
     assert "X2W_MODEL_TRANSLATE=" in env_example
     assert "X2W_MODEL_REVIEW=" in env_example
     assert "X2W_MODEL_WECHAT_REWRITE=" in env_example
+
+
+def test_backend_dev_script_restarts_existing_8000_listener(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    uv_marker = tmp_path / "uv-called"
+    kill_marker = tmp_path / "kill-called"
+
+    (bin_dir / "lsof").write_text(
+        "#!/usr/bin/env bash\n"
+        f"if [ -f {kill_marker} ]; then exit 0; fi\n"
+        "printf '3279\\n'\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "kill").write_text(
+        "#!/usr/bin/env bash\n"
+        f"printf '%s' \"$*\" > {kill_marker}\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "uv").write_text(
+        "#!/usr/bin/env bash\n"
+        f"touch {uv_marker}\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    os.chmod(bin_dir / "lsof", 0o755)
+    os.chmod(bin_dir / "kill", 0o755)
+    os.chmod(bin_dir / "uv", 0o755)
+
+    result = subprocess.run(
+        ["bash", str(repo_root / "scripts" / "dev.sh")],
+        cwd=repo_root,
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert uv_marker.exists()
+    assert kill_marker.read_text(encoding="utf-8") == "3279"
+    assert "127.0.0.1:8000 已被占用，正在重启后端服务。" in result.stdout
+
+
+def test_make_backend_starts_uvicorn_when_8000_is_free(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    uv_marker = tmp_path / "uv-called"
+
+    (bin_dir / "lsof").write_text(
+        "#!/usr/bin/env bash\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "uv").write_text(
+        "#!/usr/bin/env bash\n"
+        f"touch {uv_marker}\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    os.chmod(bin_dir / "lsof", 0o755)
+    os.chmod(bin_dir / "uv", 0o755)
+
+    result = subprocess.run(
+        ["make", "backend"],
+        cwd=repo_root,
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert uv_marker.exists()

@@ -33,9 +33,21 @@ install-playwright:
 	PYTHONPATH="$(ROOT_DIR)" uv run --directory "$(ROOT_DIR)" playwright install chromium
 
 check-api:
-	PYTHONPATH="$(ROOT_DIR)" uv run --directory "$(ROOT_DIR)" python -c "from agent.config import Settings; from agent.models.gateway import ModelGateway; settings = Settings(); api_key = settings.api_key.strip(); env_file = '$(ENV_FILE)'; assert api_key, f'X2W_API_KEY is empty; please configure it in {env_file}'; gateway = ModelGateway(api_key=api_key, base_url=settings.api_base); gateway._client.models.list(); print('API connection OK:', settings.provider, settings.api_base)"
+	PYTHONPATH="$(ROOT_DIR)" uv run --directory "$(ROOT_DIR)" python -c "from agent.config import Settings; from agent.models.gateway import ModelGateway; settings = Settings(); api_key = settings.api_key.strip(); env_file = '$(ENV_FILE)'; assert api_key, f'X2W_API_KEY is empty; please configure it in {env_file}'; gateway = ModelGateway(api_key=api_key, base_url=settings.api_base); gateway._client.models.list(); results = gateway.probe_stage_models(settings.stage_models); print('API connection OK:', settings.provider, settings.api_base); [print(f'- {stage}: {model}') for stage, model in results.items()]"
 
 backend:
+	@set -euo pipefail; \
+	existing_pids="$$(lsof -tiTCP:8000 -sTCP:LISTEN 2>/dev/null || true)"; \
+	if [ -n "$$existing_pids" ]; then \
+	  printf "127.0.0.1:8000 已被占用，正在重启后端服务。\n"; \
+	  env kill $$existing_pids 2>/dev/null || true; \
+	  sleep 1; \
+	  remaining_pids="$$(lsof -tiTCP:8000 -sTCP:LISTEN 2>/dev/null || true)"; \
+	  if [ -n "$$remaining_pids" ]; then \
+	    env kill -9 $$remaining_pids 2>/dev/null || true; \
+	    sleep 1; \
+	  fi; \
+	fi; \
 	PYTHONPATH="$(ROOT_DIR)" uv run --directory "$(ROOT_DIR)" --python 3.11 uvicorn agent.api.main:app --app-dir "$(ROOT_DIR)" --reload --host 127.0.0.1 --port 8000
 
 frontend:

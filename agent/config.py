@@ -13,6 +13,7 @@ class Settings(BaseSettings):
         extra="ignore",
         env_file=".env",
         env_file_encoding="utf-8",
+        populate_by_name=True,
     )
 
     provider: ProviderName = Field(
@@ -24,7 +25,7 @@ class Settings(BaseSettings):
     artifacts_dir: str = "artifacts"
     x_storage_state_path: str | None = None
     model_translate: str = Field(
-        default="qwen-plus",
+        default="qwen-mt-plus",
         validation_alias=AliasChoices("X2W_MODEL_TRANSLATE", "X2W_TRANSLATE_MODEL"),
     )
     model_review: str = Field(
@@ -32,7 +33,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("X2W_MODEL_REVIEW", "X2W_REVIEW_MODEL"),
     )
     model_wechat_rewrite: str = Field(
-        default="qwen-max",
+        default="qwen-plus",
         validation_alias=AliasChoices("X2W_MODEL_WECHAT_REWRITE", "X2W_WECHAT_REWRITE_MODEL"),
     )
 
@@ -62,5 +63,9 @@ class Settings(BaseSettings):
         return {
             "translate": self.model_translate,
             "review": self.model_review,
+            "route": self.model_review,
+            "final-check": self.model_review,
+            "light-polish": self.model_review,
             "wechat-rewrite": self.model_wechat_rewrite,
+            "targeted-fix": self.model_wechat_rewrite,
         }

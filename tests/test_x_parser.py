@@ -10,7 +10,12 @@ if str(REPO_ROOT) not in sys.path:
 
 from agent.jobs.store import JobStore  # noqa: E402
 from agent.stages.x_fetch import run_x_fetch  # noqa: E402
-from packages.x_fetch.client import XFetchError, fetch_x_page  # noqa: E402
+from packages.x_fetch.client import (  # noqa: E402
+    XFetchError,
+    X_TO_MARKDOWN_SKILL_SCRIPT,
+    fetch_x_markdown_with_skill,
+    fetch_x_page,
+)
 from packages.x_fetch.parser import parse_x_html  # noqa: E402
 
 
@@ -22,6 +27,11 @@ class FakeContext:
         self.job_id = job_id
         self.url = url
         self.storage_state = storage_state
+
+
+def test_x_to_markdown_skill_script_is_vendored_inside_repo() -> None:
+    assert str(X_TO_MARKDOWN_SKILL_SCRIPT).startswith(str(REPO_ROOT))
+    assert X_TO_MARKDOWN_SKILL_SCRIPT.is_file()
 
 
 def test_parse_tweet_html_to_markdown() -> None:
@@ -48,6 +58,26 @@ def test_parse_article_html_to_markdown() -> None:
         "- First point\n"
         "- Second point\n"
     )
+
+
+def test_parse_singular_i_article_url_html_to_markdown() -> None:
+    html = (FIXTURES_DIR / "x_article.html").read_text(encoding="utf-8")
+
+    parsed = parse_x_html(html, url="https://x.com/i/article/987654321")
+
+    assert parsed.content_type == "article"
+    assert parsed.title == "X Article: Shipping AI Agents"
+    assert parsed.markdown.startswith("# X Article: Shipping AI Agents")
+
+
+def test_parse_user_article_url_html_to_markdown() -> None:
+    html = (FIXTURES_DIR / "x_article.html").read_text(encoding="utf-8")
+
+    parsed = parse_x_html(html, url="https://x.com/hooeem/article/2050332284675362853")
+
+    assert parsed.content_type == "article"
+    assert parsed.title == "X Article: Shipping AI Agents"
+    assert parsed.markdown.startswith("# X Article: Shipping AI Agents")
 
 
 def test_parse_article_html_raises_on_login_like_page() -> None:
@@ -311,6 +341,128 @@ def test_run_x_fetch_writes_source_markdown(monkeypatch, tmp_path: Path) -> None
     assert markdown.startswith("# X Article: Shipping AI Agents")
 
 
+def test_run_x_fetch_writes_source_markdown_for_user_article_url(monkeypatch, tmp_path: Path) -> None:
+    html = (FIXTURES_DIR / "x_article.html").read_text(encoding="utf-8")
+    store = JobStore(root_dir=tmp_path)
+    job = store.create_job(url="https://x.com/hooeem/article/2050332284675362853")
+
+    monkeypatch.setattr("agent.stages.x_fetch.fetch_x_page", lambda url, storage_state=None: html)
+
+    markdown = run_x_fetch(
+        FakeContext(job_id=job.job_id, url=job.url),
+        store,
+    )
+
+    artifact_path = tmp_path / job.job_id / "01-source.md"
+    assert markdown == artifact_path.read_text(encoding="utf-8")
+    assert markdown.startswith("# X Article: Shipping AI Agents")
+
+
+def test_run_x_fetch_falls_back_to_skill_markdown_for_article_timeout(
+    monkeypatch, tmp_path: Path
+) -> None:
+    store = JobStore(root_dir=tmp_path)
+    job = store.create_job(url="https://x.com/hooeem/article/2050332284675362853")
+    skill_markdown = (
+        "---\n"
+        'url: "https://x.com/i/article/2050332284675362853"\n'
+        'requestedUrl: "https://x.com/hooeem/article/2050332284675362853"\n'
+        'title: "how to find the next 100x idea:"\n'
+        "---\n\n"
+        "# how to find the next 100x idea:\n\n"
+        "Stop wasting your time, build this instead.\n"
+    )
+
+    def fail_fetch(_url: str, storage_state=None) -> str:
+        raise XFetchError("Timed out waiting for X content after DOMContentLoaded")
+
+    monkeypatch.setattr("agent.stages.x_fetch.fetch_x_page", fail_fetch)
+    captured: dict[str, Path | str] = {}
+
+    def fake_skill(
+        url: str,
+        *,
+        output_dir: str | Path | None = None,
+        media_output_dir: str | Path | None = None,
+        media_link_prefix: str | None = None,
+    ) -> str:
+        assert url == job.url
+        captured["output_dir"] = Path(output_dir) if output_dir is not None else Path()
+        captured["media_output_dir"] = Path(media_output_dir) if media_output_dir is not None else Path()
+        captured["media_link_prefix"] = media_link_prefix or ""
+        return skill_markdown
+
+    monkeypatch.setattr("agent.stages.x_fetch.fetch_x_markdown_with_skill", fake_skill, raising=False)
+
+    markdown = run_x_fetch(
+        FakeContext(job_id=job.job_id, url=job.url),
+        store,
+    )
+
+    artifact_path = tmp_path / job.job_id / "01-source.md"
+    assert markdown == skill_markdown
+    assert markdown == artifact_path.read_text(encoding="utf-8")
+    assert markdown.startswith("---\n")
+    assert "requestedUrl: \"https://x.com/hooeem/article/2050332284675362853\"" in markdown
+    assert captured["output_dir"] == tmp_path / job.job_id / "_x_to_markdown"
+    assert captured["media_output_dir"] == tmp_path / job.job_id / "01-source.assets"
+    assert captured["media_link_prefix"] == "01-source.assets"
+
+
+def test_fetch_x_markdown_with_skill_uses_project_output_dir_and_resolves_relative_markdown_path(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "_x_to_markdown"
+    markdown_path = output_dir / "article.md"
+    markdown_path.parent.mkdir(parents=True, exist_ok=True)
+    markdown_path.write_text(
+        '---\nrequestedUrl: "https://x.com/i/article/2050332284675362853"\n---\n\n# title\n',
+        encoding="utf-8",
+    )
+    calls: dict[str, object] = {}
+
+    monkeypatch.setattr("packages.x_fetch.client.shutil.which", lambda _: "/opt/homebrew/bin/bun")
+
+    def fake_run(
+        command: list[str],
+        *,
+        capture_output: bool,
+        text: bool,
+        cwd: Path,
+        env: dict[str, str],
+    ) -> object:
+        calls["command"] = command
+        calls["cwd"] = cwd
+        calls["capture_output"] = capture_output
+        calls["text"] = text
+        calls["env_has_path"] = "PATH" in env
+        return type(
+            "CompletedProcess",
+            (),
+            {"returncode": 0, "stdout": '{"markdownPath":"article.md"}', "stderr": ""},
+        )()
+
+    monkeypatch.setattr("packages.x_fetch.client.subprocess.run", fake_run)
+
+    markdown = fetch_x_markdown_with_skill(
+        "https://x.com/hooeem/article/2050332284675362853",
+        output_dir=output_dir,
+    )
+
+    assert markdown.startswith('---\nrequestedUrl: "https://x.com/hooeem/article/2050332284675362853"')
+    assert calls["command"] == [
+        "/opt/homebrew/bin/bun",
+        str(X_TO_MARKDOWN_SKILL_SCRIPT),
+        "https://x.com/i/article/2050332284675362853",
+        "--json",
+        "--download-media",
+        "-o",
+        str(output_dir),
+    ]
+    assert calls["cwd"] == X_TO_MARKDOWN_SKILL_SCRIPT.parent
+
+
 def test_fetch_x_page_wait_for_selector_timeout_raises_x_fetch_error(monkeypatch) -> None:
     class FakePlaywrightTimeoutError(Exception):
         pass
@@ -423,3 +575,64 @@ def test_fetch_x_page_normalizes_path_storage_state_for_new_context(monkeypatch,
 
     assert html == "<html><body>ok</body></html>"
     assert captured["new_context_kwargs"] == {"storage_state": str(storage_state)}
+
+
+def test_fetch_x_page_normalizes_user_article_url_before_navigation(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakePage:
+        def goto(self, url: str, wait_until: str) -> None:
+            captured["goto"] = (url, wait_until)
+
+        def wait_for_selector(self, selector: str, timeout: int) -> None:
+            captured["wait_for_selector"] = (selector, timeout)
+
+        def content(self) -> str:
+            return "<html><body>ok</body></html>"
+
+    class FakeContext:
+        def new_page(self) -> FakePage:
+            return FakePage()
+
+        def close(self) -> None:
+            captured["context_closed"] = True
+
+    class FakeBrowser:
+        def new_context(self, **kwargs):
+            captured["new_context_kwargs"] = kwargs
+            return FakeContext()
+
+        def close(self) -> None:
+            captured["browser_closed"] = True
+
+    class FakeChromium:
+        def launch(self, headless: bool):
+            captured["headless"] = headless
+            return FakeBrowser()
+
+    class FakeSyncPlaywright:
+        def __enter__(self):
+            return type("FakePlaywright", (), {"chromium": FakeChromium()})()
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    class FakeSyncApiModule:
+        TimeoutError = RuntimeError
+
+        @staticmethod
+        def sync_playwright() -> FakeSyncPlaywright:
+            return FakeSyncPlaywright()
+
+    fake_sync_api = FakeSyncApiModule()
+
+    monkeypatch.setitem(sys.modules, "playwright", type("FakePlaywrightPackage", (), {"sync_api": fake_sync_api})())
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", fake_sync_api)
+
+    html = fetch_x_page("https://x.com/hooeem/article/2050332284675362853")
+
+    assert html == "<html><body>ok</body></html>"
+    assert captured["goto"] == (
+        "https://x.com/i/article/2050332284675362853",
+        "domcontentloaded",
+    )

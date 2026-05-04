@@ -18,7 +18,7 @@ def parse_x_html(html: str, url: str) -> ParsedXPage:
 
 
 def _is_article_shape(*, html: str, url: str) -> bool:
-    return 'data-testid="article"' in html or "/i/articles/" in url
+    return 'data-testid="article"' in html or re.search(r"/(?:i/articles?|[A-Za-z0-9_]{1,15}/article)/\d+", url) is not None
 
 
 def _is_tweet_shape(*, html: str, url: str) -> bool:

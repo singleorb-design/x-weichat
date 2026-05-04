@@ -131,6 +131,270 @@ def test_update_status_changes_status_and_current_stage(tmp_path: Path) -> None:
     assert reloaded.finished_at == updated.finished_at
 
 
+def test_list_jobs_returns_recent_jobs_from_sqlite_index(tmp_path: Path) -> None:
+    store = JobStore(root_dir=tmp_path)
+    older = store.create_job(url="https://x.com/alice/status/1")
+    newer = store.create_job(url="https://x.com/hooeem/article/2050332284675362853")
+    store.update_status(
+        job_id=newer.job_id,
+        status="running",
+        current_stage="x-fetch",
+    )
+
+    jobs = store.list_jobs()
+
+    assert [job.job_id for job in jobs] == [newer.job_id, older.job_id]
+    assert jobs[0].status == "running"
+    assert jobs[0].current_stage == "x-fetch"
+    assert (tmp_path / "jobs.sqlite3").is_file()
+
+
+def test_delete_job_removes_job_directory_and_sqlite_index(tmp_path: Path) -> None:
+    store = JobStore(root_dir=tmp_path)
+    job = store.create_job(url="https://x.com/alice/status/1")
+    store.write_artifact(
+        job_id=job.job_id,
+        relative_path="01-source.md",
+        content="# source\n",
+    )
+
+    store.delete_job(job.job_id)
+
+    assert not (tmp_path / job.job_id).exists()
+    assert [item.job_id for item in store.list_jobs()] == []
+    with pytest.raises(FileNotFoundError):
+        store.read_job(job.job_id)
+
+
+def test_delete_job_rejects_claimed_or_running_jobs(tmp_path: Path) -> None:
+    store = JobStore(root_dir=tmp_path)
+    claimed_job = store.create_job(url="https://x.com/alice/status/1")
+    running_job = store.create_job(url="https://x.com/bob/status/2")
+
+    store.claim_run(job_id=claimed_job.job_id)
+    store.update_status(
+        job_id=running_job.job_id,
+        status="running",
+        current_stage="translate",
+    )
+
+    with pytest.raises(ValueError, match="scheduled or running"):
+        store.delete_job(claimed_job.job_id)
+
+    with pytest.raises(ValueError, match="scheduled or running"):
+        store.delete_job(running_job.job_id)
+
+
+def test_delete_job_allows_stale_claimed_pending_job(tmp_path: Path) -> None:
+    store = JobStore(root_dir=tmp_path)
+    job = store.create_job(url="https://x.com/alice/status/1")
+    claim_path = store._run_claim_file(job.job_id)
+    claim_path.write_text(
+        json.dumps(
+            {
+                "token": "stale-token",
+                "claimed_at": (datetime.now(timezone.utc) - JobStore.RUN_CLAIM_TTL - timedelta(seconds=1)).isoformat(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    store.delete_job(job.job_id)
+
+    assert not (tmp_path / job.job_id).exists()
+
+
+def test_reset_for_retry_from_review_clears_tail_artifacts_and_metadata(tmp_path: Path) -> None:
+    store = JobStore(root_dir=tmp_path)
+    job = store.create_job(url="https://x.com/a/status/1")
+
+    for name in [
+        "01-source.md",
+        "02-translation.md",
+        "03-reviewed.md",
+        "04-route.json",
+        "05-polished.md",
+        "06-rewritten.md",
+        "07-final-candidate.md",
+        "08-final-check.json",
+        "09-final-fixed.md",
+        "final_check_after_fix.json",
+        "10-final.md",
+        "11-wechat.html",
+    ]:
+        store.write_artifact(job_id=job.job_id, relative_path=name, content=f"{name}\n")
+
+    store.update_status(job_id=job.job_id, status="running", current_stage="render-html")
+    store.update_stage_metadata(
+        job_id=job.job_id,
+        stage="review",
+        provider="qwen",
+        model="qwen-mt-plus",
+        prompt_version="review_zh.txt",
+        duration=1.2,
+        error={
+            "error_type": "ValueError",
+            "message": "review failed",
+            "retryable": True,
+            "suggestion": "retry review",
+        },
+    )
+    store.update_stage_probe(
+        job_id=job.job_id,
+        stage="review",
+        status="passed",
+        message="OK",
+        checked_at="2026-05-04T00:00:00Z",
+    )
+    store.update_stage_metadata(
+        job_id=job.job_id,
+        stage="wechat-rewrite",
+        provider="qwen",
+        model="qwen-mt-plus",
+        prompt_version="wechat_rewrite_zh.txt",
+        duration=2.3,
+        error={
+            "error_type": "RuntimeError",
+            "message": "rewrite failed",
+            "retryable": True,
+            "suggestion": "retry rewrite",
+        },
+    )
+    store.update_stage_probe(
+        job_id=job.job_id,
+        stage="wechat-rewrite",
+        status="failed",
+        message="probe failed",
+        checked_at="2026-05-04T00:00:01Z",
+    )
+    failed = store.update_status(
+        job_id=job.job_id,
+        status="failed",
+        current_stage="wechat-rewrite",
+    )
+
+    reset = store.reset_for_retry(job_id=job.job_id, stage="review")
+
+    assert failed.started_at is not None
+    assert failed.finished_at is not None
+    assert reset.status == "pending"
+    assert reset.current_stage == "review"
+    assert reset.started_at is None
+    assert reset.finished_at is None
+    assert (tmp_path / job.job_id / "01-source.md").is_file()
+    assert (tmp_path / job.job_id / "02-translation.md").is_file()
+    assert not (tmp_path / job.job_id / "03-reviewed.md").exists()
+    assert not (tmp_path / job.job_id / "04-route.json").exists()
+    assert not (tmp_path / job.job_id / "05-polished.md").exists()
+    assert not (tmp_path / job.job_id / "06-rewritten.md").exists()
+    assert not (tmp_path / job.job_id / "07-final-candidate.md").exists()
+    assert not (tmp_path / job.job_id / "08-final-check.json").exists()
+    assert not (tmp_path / job.job_id / "09-final-fixed.md").exists()
+    assert not (tmp_path / job.job_id / "final_check_after_fix.json").exists()
+    assert not (tmp_path / job.job_id / "10-final.md").exists()
+    assert not (tmp_path / job.job_id / "11-wechat.html").exists()
+    assert "review" not in reset.stage_models
+    assert "review" not in reset.stage_probes
+    assert "wechat-rewrite" not in reset.stage_models
+    assert "wechat-rewrite" not in reset.stage_probes
+    assert "review" not in reset.prompt_versions
+    assert "wechat-rewrite" not in reset.prompt_versions
+    assert "review" not in reset.stage_durations
+    assert "wechat-rewrite" not in reset.stage_durations
+    assert "review" not in reset.stage_errors
+    assert "wechat-rewrite" not in reset.stage_errors
+
+
+def test_update_stage_probe_persists_probe_result(tmp_path: Path) -> None:
+    store = JobStore(root_dir=tmp_path)
+    job = store.create_job(url="https://x.com/a/status/1")
+
+    updated = store.update_stage_probe(
+        job_id=job.job_id,
+        stage="light-polish",
+        status="passed",
+        message="OK",
+        checked_at="2026-05-04T12:00:00Z",
+    )
+
+    assert updated.stage_probes["light-polish"].status == "passed"
+    assert updated.stage_probes["light-polish"].message == "OK"
+    assert updated.stage_probes["light-polish"].checked_at == "2026-05-04T12:00:00Z"
+
+    reloaded = store.read_job(job.job_id)
+    assert reloaded.stage_probes["light-polish"].status == "passed"
+
+
+def test_reset_for_retry_from_render_html_only_removes_html(tmp_path: Path) -> None:
+    store = JobStore(root_dir=tmp_path)
+    job = store.create_job(url="https://x.com/a/status/1")
+
+    for name in [
+        "01-source.md",
+        "02-translation.md",
+        "03-reviewed.md",
+        "10-final.md",
+        "11-wechat.html",
+    ]:
+        store.write_artifact(job_id=job.job_id, relative_path=name, content=f"{name}\n")
+
+    store.update_status(job_id=job.job_id, status="running", current_stage="render-html")
+    store.update_status(job_id=job.job_id, status="succeeded", current_stage="render-html")
+
+    reset = store.reset_for_retry(job_id=job.job_id, stage="render-html")
+
+    assert reset.status == "pending"
+    assert reset.current_stage == "render-html"
+    assert (tmp_path / job.job_id / "10-final.md").is_file()
+    assert not (tmp_path / job.job_id / "11-wechat.html").exists()
+
+
+def test_reset_for_retry_rejects_unknown_stage(tmp_path: Path) -> None:
+    store = JobStore(root_dir=tmp_path)
+    job = store.create_job(url="https://x.com/a/status/1")
+
+    with pytest.raises(ValueError, match="stage must be one of"):
+        store.reset_for_retry(job_id=job.job_id, stage="invalid-stage")
+
+
+def test_reset_for_retry_rejects_running_job(tmp_path: Path) -> None:
+    store = JobStore(root_dir=tmp_path)
+    job = store.create_job(url="https://x.com/a/status/1")
+    store.update_status(job_id=job.job_id, status="running", current_stage="review")
+
+    with pytest.raises(ValueError, match="scheduled or running"):
+        store.reset_for_retry(job_id=job.job_id, stage="review")
+
+
+def test_reset_for_retry_rejects_active_run_claim(tmp_path: Path) -> None:
+    store = JobStore(root_dir=tmp_path)
+    job = store.create_job(url="https://x.com/a/status/1")
+    store.claim_run(job_id=job.job_id)
+
+    with pytest.raises(ValueError, match="scheduled or running"):
+        store.reset_for_retry(job_id=job.job_id, stage="review")
+
+
+def test_reset_for_retry_ignores_stale_run_claim(tmp_path: Path) -> None:
+    store = JobStore(root_dir=tmp_path)
+    job = store.create_job(url="https://x.com/a/status/1")
+    claim_path = store._run_claim_file(job.job_id)
+    claim_path.write_text(
+        json.dumps(
+            {
+                "token": "stale-token",
+                "claimed_at": (datetime.now(timezone.utc) - JobStore.RUN_CLAIM_TTL - timedelta(seconds=1)).isoformat(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    reset = store.reset_for_retry(job_id=job.job_id, stage="review")
+
+    assert reset.status == "pending"
+    assert not claim_path.exists()
+
+
 def test_update_status_sets_started_at_only_once_and_finished_at_on_failure(tmp_path: Path) -> None:
     store = JobStore(root_dir=tmp_path)
     job = store.create_job(url="https://example.com/post")

@@ -1,0 +1,6 @@
+{
+  "decision": "LIGHT_POLISH",
+  "reason": "文章结构清晰，技术信息完整，但部分段落衔接略显生硬，标题和开头可以更吸引人，整体阅读体验有待提升。",
+  "risk": "MEDIUM",
+  "recommended_next_prompt": "LIGHT_POLISH"
+}

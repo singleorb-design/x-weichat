@@ -3,6 +3,7 @@ import { pathToFileURL } from 'node:url';
 import { renderWechatHtml } from './render.js';
 export { renderWechatHtml } from './render.js';
 export { wechatTemplate } from './template.js';
+export { MODERN_RED_ACCENT, MODERN_RED_CONTAINER_BACKGROUND, MODERN_RED_PRIMARY, MODERN_RED_QUOTE_BACKGROUND, MODERN_RED_STYLES, removeFirstHeading, renderModernRedPage, wrapModernRedContent, } from './vendor/modern-red/index.js';
 export function runCli(args = process.argv.slice(2)) {
     const inputPath = args[0];
     const outputPath = args[1];

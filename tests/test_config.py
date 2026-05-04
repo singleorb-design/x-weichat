@@ -22,9 +22,13 @@ def test_settings_defaults_include_all_stage_models(monkeypatch) -> None:
 
     assert settings.provider == "qwen"
     assert settings.stage_models == {
-        "translate": "qwen-plus",
+        "translate": "qwen-mt-plus",
         "review": "qwen-plus",
-        "wechat-rewrite": "qwen-max",
+        "route": "qwen-plus",
+        "final-check": "qwen-plus",
+        "light-polish": "qwen-plus",
+        "wechat-rewrite": "qwen-plus",
+        "targeted-fix": "qwen-plus",
     }
     assert settings.x_storage_state_path is None
 
@@ -58,7 +62,49 @@ def test_settings_env_api_key_overrides_dotenv_file(monkeypatch, tmp_path) -> No
     assert settings.api_key == "env-key"
 
 
+def test_settings_constructor_values_override_dotenv_file(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                "X2W_API_KEY=file-key",
+                "X2W_MODEL_TRANSLATE=qwen-mt-plus",
+                "X2W_MODEL_REVIEW=qwen-plus",
+                "X2W_MODEL_WECHAT_REWRITE=qwen-plus",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    settings = Settings(
+        api_key="constructor-key",
+        model_translate="translate-model",
+        model_review="review-model",
+        model_wechat_rewrite="rewrite-model",
+    )
+
+    assert settings.api_key == "constructor-key"
+    assert settings.stage_models == {
+        "translate": "translate-model",
+        "review": "review-model",
+        "route": "review-model",
+        "final-check": "review-model",
+        "light-polish": "review-model",
+        "wechat-rewrite": "rewrite-model",
+        "targeted-fix": "rewrite-model",
+    }
+
+
 def test_settings_load_values_from_primary_env_names(monkeypatch) -> None:
+    for name in [
+        "X2W_MODEL_PROVIDER",
+        "X2W_TRANSLATE_MODEL",
+        "X2W_REVIEW_MODEL",
+        "X2W_WECHAT_REWRITE_MODEL",
+    ]:
+        monkeypatch.delenv(name, raising=False)
+
     monkeypatch.setenv("X2W_PROVIDER", "openai")
     monkeypatch.setenv("X2W_MODEL_TRANSLATE", "gpt-4.1-mini")
     monkeypatch.setenv("X2W_MODEL_REVIEW", "gpt-4.1")
@@ -70,23 +116,39 @@ def test_settings_load_values_from_primary_env_names(monkeypatch) -> None:
     assert settings.stage_models == {
         "translate": "gpt-4.1-mini",
         "review": "gpt-4.1",
+        "route": "gpt-4.1",
+        "final-check": "gpt-4.1",
+        "light-polish": "gpt-4.1",
         "wechat-rewrite": "gpt-4.1-nano",
+        "targeted-fix": "gpt-4.1-nano",
     }
 
 
 def test_settings_load_values_from_compatible_env_names(monkeypatch) -> None:
+    for name in [
+        "X2W_PROVIDER",
+        "X2W_MODEL_TRANSLATE",
+        "X2W_MODEL_REVIEW",
+        "X2W_MODEL_WECHAT_REWRITE",
+    ]:
+        monkeypatch.delenv(name, raising=False)
+
     monkeypatch.setenv("X2W_MODEL_PROVIDER", "qwen")
-    monkeypatch.setenv("X2W_TRANSLATE_MODEL", "qwen-plus-2025-04-28")
-    monkeypatch.setenv("X2W_REVIEW_MODEL", "qwen-plus-2025-04-28")
-    monkeypatch.setenv("X2W_WECHAT_REWRITE_MODEL", "qwen-max-2025-01-25")
+    monkeypatch.setenv("X2W_TRANSLATE_MODEL", "qwen-mt-plus")
+    monkeypatch.setenv("X2W_REVIEW_MODEL", "qwen-mt-plus")
+    monkeypatch.setenv("X2W_WECHAT_REWRITE_MODEL", "qwen-mt-plus")
 
     settings = Settings()
 
     assert settings.provider == "qwen"
     assert settings.stage_models == {
-        "translate": "qwen-plus-2025-04-28",
-        "review": "qwen-plus-2025-04-28",
-        "wechat-rewrite": "qwen-max-2025-01-25",
+        "translate": "qwen-mt-plus",
+        "review": "qwen-mt-plus",
+        "route": "qwen-mt-plus",
+        "final-check": "qwen-mt-plus",
+        "light-polish": "qwen-mt-plus",
+        "wechat-rewrite": "qwen-mt-plus",
+        "targeted-fix": "qwen-mt-plus",
     }
 
 
