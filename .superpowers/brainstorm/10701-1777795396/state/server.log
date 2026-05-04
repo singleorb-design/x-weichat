@@ -1,0 +1,5 @@
+{"type":"server-started","port":51928,"host":"127.0.0.1","url_host":"localhost","url":"http://localhost:51928","screen_dir":"/Users/bytedance/GolandProjects/x-weichat/.superpowers/brainstorm/10701-1777795396/content","state_dir":"/Users/bytedance/GolandProjects/x-weichat/.superpowers/brainstorm/10701-1777795396/state"}
+{"type":"screen-added","file":"/Users/bytedance/GolandProjects/x-weichat/.superpowers/brainstorm/10701-1777795396/content/architecture-overview.html"}
+{"source":"user-event","type":"click","text":"✓\n      \n        架构方向认可\n        如果这个系统拆分和数据流没问题，就点这里或直接在终端回复认可。","choice":"approve-architecture","id":null,"timestamp":1777795514373}
+{"type":"screen-added","file":"/Users/bytedance/GolandProjects/x-weichat/.superpowers/brainstorm/10701-1777795396/content/waiting-2.html"}
+{"type":"server-stopped","reason":"idle timeout"}

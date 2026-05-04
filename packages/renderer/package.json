@@ -1,0 +1,19 @@
+{
+  "name": "x-to-wechat-renderer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "render": "node dist/index.js"
+  },
+  "dependencies": {
+    "marked": "^13.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5"
+  }
+}

@@ -1,0 +1,72 @@
+<h2>x-to-wechat-agent 架构总览</h2>
+<p class="subtitle">推荐方案 B：Python 主控 + Node 内部渲染工具链 + 本地 Web UI</p>
+
+<div class="section">
+  <div class="mockup">
+    <div class="mockup-header">用户路径</div>
+    <div class="mockup-body">
+      <div class="mock-nav">本地浏览器 Web UI</div>
+      <div style="display:grid;grid-template-columns:1fr;gap:10px;margin-top:12px;">
+        <div class="placeholder">输入 X URL / 查看运行状态 / 预览阶段产物 / 导出 HTML</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="split">
+    <div class="mockup">
+      <div class="mockup-header">Python Agent Core</div>
+      <div class="mockup-body">
+        <div class="placeholder">Pipeline Orchestrator</div>
+        <div class="placeholder">Provider + Model Router</div>
+        <div class="placeholder">Prompt Registry</div>
+        <div class="placeholder">Artifact Store</div>
+        <div class="placeholder">Job State / Logs</div>
+      </div>
+    </div>
+    <div class="mockup">
+      <div class="mockup-header">Node Renderer</div>
+      <div class="mockup-body">
+        <div class="placeholder">Markdown → WeChat HTML</div>
+        <div class="placeholder">模板 / 样式 / 外链脚注处理</div>
+        <div class="placeholder">作为 Python 子进程被调用</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="mockup">
+    <div class="mockup-header">5 段流水线</div>
+    <div class="mockup-body">
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;">
+        <div class="placeholder">1. x-fetch</div>
+        <div class="placeholder">2. translate</div>
+        <div class="placeholder">3. review</div>
+        <div class="placeholder">4. wechat-rewrite</div>
+        <div class="placeholder">5. render-html</div>
+      </div>
+      <div style="margin-top:12px" class="placeholder">每一步都落盘：source / translation / reviewed / rewritten / html</div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="options">
+    <div class="option" data-choice="approve-architecture" onclick="toggleSelect(this)">
+      <div class="letter">✓</div>
+      <div class="content">
+        <h3>架构方向认可</h3>
+        <p>如果这个系统拆分和数据流没问题，就点这里或直接在终端回复认可。</p>
+      </div>
+    </div>
+    <div class="option" data-choice="change-architecture" onclick="toggleSelect(this)">
+      <div class="letter">△</div>
+      <div class="content">
+        <h3>需要调整</h3>
+        <p>如果你想改模块边界、运行方式或产物组织，可以点这里并在终端补充。</p>
+      </div>
+    </div>
+  </div>
+</div>
