@@ -1,0 +1,133 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760">
+  <defs>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+    </pattern>
+
+    <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/>
+    </marker>
+    <marker id="arrow-cyan" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee"/>
+    </marker>
+    <marker id="arrow-amber" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#fbbf24"/>
+    </marker>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap');
+      text { font-family: 'JetBrains Mono', 'Noto Sans SC', 'PingFang SC', sans-serif; }
+      .title { font-size: 16px; font-weight: 700; fill: #e2e8f0; }
+      .sub { font-size: 10px; fill: #94a3b8; }
+      .boxTitle { font-size: 12px; font-weight: 600; fill: #e2e8f0; }
+      .boxSub { font-size: 9px; fill: #94a3b8; }
+      .tiny { font-size: 8px; fill: #94a3b8; }
+      .label { font-size: 9px; fill: #e2e8f0; font-weight: 600; }
+      .stroke { stroke: #64748b; stroke-width: 1.6; }
+      .strokeCyan { stroke: #22d3ee; stroke-width: 1.8; }
+      .strokeAmber { stroke: #fbbf24; stroke-width: 1.6; }
+      .dash { stroke-dasharray: 7 4; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="100%" height="100%" fill="#0f172a"/>
+  <rect width="100%" height="100%" fill="url(#grid)"/>
+
+  <!-- Title -->
+  <text x="30" y="38" class="title">Targeted-Fix（定点修复）改造：规则优先 + LLM 兜底（硬超时/降级）</text>
+  <text x="30" y="58" class="sub">目标：将最坏情况耗时收敛；即使 Stop 不能中断正在执行的请求，也不会让 Job 卡死在该阶段。</text>
+
+  <!-- Region: Inputs -->
+  <rect x="30" y="90" width="340" height="150" rx="12" fill="none" stroke="#fbbf24" stroke-width="1" stroke-dasharray="8,4"/>
+  <text x="42" y="110" fill="#fbbf24" font-size="10" font-weight="700">Inputs（产物契约）</text>
+
+  <!-- Input boxes -->
+  <rect x="60" y="125" width="280" height="50" rx="8" fill="#0f172a"/>
+  <rect x="60" y="125" width="280" height="50" rx="8" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="200" y="150" class="boxTitle" text-anchor="middle">07-final-candidate.md</text>
+  <text x="200" y="168" class="boxSub" text-anchor="middle">候选最终稿（Markdown）</text>
+
+  <rect x="60" y="185" width="280" height="50" rx="8" fill="#0f172a"/>
+  <rect x="60" y="185" width="280" height="50" rx="8" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+  <text x="200" y="210" class="boxTitle" text-anchor="middle">08-final-check.json</text>
+  <text x="200" y="228" class="boxSub" text-anchor="middle">issues 列表（结构化）</text>
+
+  <!-- Region: Stage -->
+  <rect x="410" y="90" width="760" height="560" rx="12" fill="none" stroke="#34d399" stroke-width="1" stroke-dasharray="8,4"/>
+  <text x="422" y="110" fill="#34d399" font-size="10" font-weight="700">targeted-fix stage（重构后）</text>
+
+  <!-- RuleFixer -->
+  <rect x="450" y="135" width="330" height="110" rx="10" fill="#0f172a"/>
+  <rect x="450" y="135" width="330" height="110" rx="10" fill="rgba(6,78,59,0.40)" stroke="#34d399" stroke-width="1.6"/>
+  <text x="615" y="162" class="boxTitle" text-anchor="middle">RuleFixer（确定性规则修复）</text>
+  <text x="615" y="184" class="boxSub" text-anchor="middle">删 YAML / 去重复 / 标题降风险 / 清理 AI 引导 / 图片前置引导语</text>
+  <text x="615" y="204" class="tiny" text-anchor="middle">写 trace：rules.json + diff + 覆盖情况（0 模型调用）</text>
+
+  <!-- Decision diamond -->
+  <g transform="translate(615, 310)">
+    <polygon points="0,-40 65,0 0,40 -65,0" fill="#0f172a"/>
+    <polygon points="0,-40 65,0 0,40 -65,0" fill="rgba(120,53,15,0.30)" stroke="#fbbf24" stroke-width="1.6"/>
+    <text y="-5" class="label" text-anchor="middle">仍有</text>
+    <text y="12" class="label" text-anchor="middle">未覆盖 issues?</text>
+  </g>
+
+  <!-- LLM Fallback -->
+  <rect x="450" y="380" width="330" height="140" rx="10" fill="#0f172a"/>
+  <rect x="450" y="380" width="330" height="140" rx="10" fill="rgba(8,51,68,0.40)" stroke="#22d3ee" stroke-width="1.6"/>
+  <text x="615" y="408" class="boxTitle" text-anchor="middle">LLMFallbackFixer（可选兜底）</text>
+  <text x="615" y="430" class="boxSub" text-anchor="middle">仅对“规则无法安全处理”的问题发起一次修复请求</text>
+  <text x="615" y="452" class="boxSub" text-anchor="middle">硬超时：T 秒；max_tokens 上限；失败即降级</text>
+  <text x="615" y="474" class="tiny" text-anchor="middle">保留：引用块 URL 保护 + 截断检测 + diff + error.txt</text>
+
+  <!-- Validation -->
+  <rect x="840" y="380" width="290" height="140" rx="10" fill="#0f172a"/>
+  <rect x="840" y="380" width="290" height="140" rx="10" fill="rgba(136,19,55,0.20)" stroke="#fb7185" stroke-width="1.4"/>
+  <text x="985" y="408" class="boxTitle" text-anchor="middle">Guardrails（校验）</text>
+  <text x="985" y="430" class="boxSub" text-anchor="middle">引用块 URL 必须仍在引用块里</text>
+  <text x="985" y="452" class="boxSub" text-anchor="middle">疑似截断：结构缺失 + 过短</text>
+  <text x="985" y="474" class="tiny" text-anchor="middle">任何失败 → 记录原因 → 回退到规则修复稿</text>
+
+  <!-- Outputs -->
+  <rect x="450" y="565" width="680" height="70" rx="10" fill="#0f172a"/>
+  <rect x="450" y="565" width="680" height="70" rx="10" fill="rgba(76,29,149,0.25)" stroke="#a78bfa" stroke-width="1.6"/>
+  <text x="790" y="594" class="boxTitle" text-anchor="middle">Outputs</text>
+  <text x="790" y="616" class="boxSub" text-anchor="middle">09-final-fixed.md（成功/回退均保证存在） + trace.assets/targeted-fix/*（可解释性与排查）</text>
+
+  <!-- Arrows -->
+  <!-- Inputs to RuleFixer -->
+  <path d="M 370 170 C 405 170 415 170 448 170" fill="none" class="stroke" marker-end="url(#arrow)"/>
+  <path d="M 370 210 C 405 210 415 210 448 210" fill="none" class="stroke" marker-end="url(#arrow)"/>
+
+  <!-- RuleFixer to Decision -->
+  <path d="M 615 245 L 615 268" fill="none" class="stroke" marker-end="url(#arrow)"/>
+
+  <!-- Decision NO to Outputs -->
+  <path d="M 680 310 C 760 310 820 350 840 420" fill="none" opacity="0"/>
+  <path d="M 615 350 C 615 450 615 525 615 565" fill="none" class="strokeCyan" marker-end="url(#arrow-cyan)"/>
+  <text x="630" y="520" class="tiny">否（规则已覆盖）</text>
+
+  <!-- Decision YES to LLM -->
+  <path d="M 615 350 C 615 365 615 372 615 380" fill="none" class="strokeAmber" marker-end="url(#arrow-amber)"/>
+  <text x="630" y="372" class="tiny">是（触发兜底）</text>
+
+  <!-- LLM to Guardrails -->
+  <path d="M 780 450 L 838 450" fill="none" class="stroke" marker-end="url(#arrow)"/>
+
+  <!-- Guardrails to Outputs -->
+  <path d="M 985 520 C 985 545 915 560 840 578" fill="none" class="stroke" marker-end="url(#arrow)"/>
+
+  <!-- LLM direct fallback to Outputs (timeout/error) -->
+  <path d="M 450 485 C 410 520 420 560 470 600" fill="none" class="stroke" marker-end="url(#arrow)"/>
+  <text x="440" y="540" class="tiny">超时/异常 → 直接回退</text>
+
+  <!-- Legend -->
+  <rect x="860" y="655" width="310" height="80" rx="10" fill="#0f172a" opacity="0.92"/>
+  <rect x="860" y="655" width="310" height="80" rx="10" fill="rgba(30,41,59,0.45)" stroke="#94a3b8" stroke-width="1"/>
+  <text x="875" y="678" class="boxTitle">图例</text>
+  <circle cx="878" cy="698" r="5" fill="#34d399"/>
+  <text x="892" y="702" class="tiny">规则修复：快、可解释、不会卡住</text>
+  <circle cx="878" cy="718" r="5" fill="#22d3ee"/>
+  <text x="892" y="722" class="tiny">模型兜底：受硬超时保护，失败必降级</text>
+  <circle cx="878" cy="738" r="5" fill="#fb7185"/>
+  <text x="892" y="742" class="tiny">校验：引用块 URL/截断等安全护栏</text>
+</svg>
