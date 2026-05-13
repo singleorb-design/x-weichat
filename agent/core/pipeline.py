@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from time import perf_counter
 
 from agent.config import Settings
@@ -16,7 +17,6 @@ from agent.stages.review import run_review
 from agent.stages.route import run_route
 from agent.stages.targeted_fix import run_targeted_fix
 from agent.stages.translate import run_translate
-from agent.stages.wechat_rewrite import run_wechat_rewrite
 from agent.stages.x_fetch import run_x_fetch
 
 
@@ -28,7 +28,6 @@ class PipelineRunner:
         "review": "审阅",
         "route": "路由判断",
         "light-polish": "轻编辑",
-        "wechat-rewrite": "强改写",
         "final-check": "终检",
         "targeted-fix": "定点修复",
         "final-output": "最终定稿",
@@ -44,7 +43,6 @@ class PipelineRunner:
         "review": "review_zh.txt",
         "route": "route_zh.txt",
         "light-polish": "light_polish_zh.txt",
-        "wechat-rewrite": "wechat_rewrite_zh.txt",
         "final-check": "final_check_zh.txt",
         "targeted-fix": "targeted_fix_zh.txt",
     }
@@ -109,6 +107,7 @@ class PipelineRunner:
             job_id=job_id,
             start_stage=stage,
             claim_token=claim_token,
+            retry_mode=mode,
         )
 
     def _validate_retry(self, *, job: JobRecord, stage: StageName, mode: RetryMode) -> None:
@@ -138,6 +137,7 @@ class PipelineRunner:
         job_id: str,
         start_stage: StageName,
         claim_token: str,
+        retry_mode: RetryMode | None = None,
     ) -> JobRecord:
         first_stage = start_stage
         job = self.store.update_status(
@@ -170,14 +170,31 @@ class PipelineRunner:
             storage_state=getattr(self.settings, "x_storage_state_path", None),
         )
 
-        start_index = self.STAGE_ORDER.index(start_stage)
-        for index, stage in enumerate(self.STAGE_ORDER[start_index:]):
+        stages = list(self.STAGE_ORDER[self.STAGE_ORDER.index(start_stage) :])
+        if retry_mode == "failed-stage" and start_stage == "review":
+            stages = ["review", "render-html"]
+
+        for index, stage in enumerate(stages):
+            # 支持用户在 UI 中“停止任务”：一旦状态被置为 canceled，就不再推进后续阶段。
+            try:
+                if self.store.read_job(job_id).status == "canceled":
+                    return self.store.read_job(job_id)
+            except Exception:
+                pass
+
             if index > 0:
-                self.store.update_status(
-                    job_id=job_id,
-                    status="running",
-                    current_stage=stage,
-                )
+                try:
+                    self.store.update_status(
+                        job_id=job_id,
+                        status="running",
+                        current_stage=stage,
+                    )
+                except ValueError:
+                    # 如果任务已被标记为 canceled/terminal，则停止推进。
+                    try:
+                        return self.store.read_job(job_id)
+                    except Exception:
+                        raise
 
             started_at = perf_counter()
             try:
@@ -188,7 +205,24 @@ class PipelineRunner:
                     stage=stage,
                     duration=perf_counter() - started_at,
                 )
+
+                # tweet 类型输入不需要走“路由/改写/终检/定稿”链路；跑完 review 后直接渲染。
+                if (
+                    retry_mode is None
+                    and stage == "review"
+                    and "route" in stages
+                    and self._should_skip_advanced_stages(job_id=job_id)
+                ):
+                    # 不能直接重绑 `stages`，否则 for-loop 仍在迭代旧 list。
+                    del stages[index + 1 :]
+                    if not stages or stages[-1] != "render-html":
+                        stages.append("render-html")
             except Exception as exc:
+                try:
+                    if self.store.read_job(job_id).status == "canceled":
+                        return self.store.read_job(job_id)
+                except Exception:
+                    pass
                 return self._fail_job(
                     job_id=job_id,
                     stage=stage,
@@ -196,11 +230,31 @@ class PipelineRunner:
                     duration=perf_counter() - started_at,
                 )
 
+        try:
+            if self.store.read_job(job_id).status == "canceled":
+                return self.store.read_job(job_id)
+        except Exception:
+            pass
+
         return self.store.update_status(
             job_id=job_id,
             status="succeeded",
             current_stage=self.STAGE_ORDER[-1],
         )
+
+    def _should_skip_advanced_stages(self, *, job_id: str) -> bool:
+        """决定是否跳过 route/light-polish/final-* 等高级阶段。
+
+        目前约定：metadata.json 的 source_type=\"tweet\" 时，仅执行到 review 然后直接 render-html。
+        """
+
+        try:
+            raw = self.store.read_artifact(job_id=job_id, relative_path="metadata.json")
+            payload = json.loads(raw)
+        except Exception:
+            return False
+
+        return payload.get("source_type") == "tweet"
 
     def _fail_job(
         self,
@@ -304,12 +358,91 @@ class PipelineRunner:
                 suggestion="模型请求触发限流，请稍后重试或调整并发。",
             )
 
+        if error_type == "XFetchError":
+            normalized = message.lower()
+            if "不是英文" in message:
+                return StageError(
+                    error_type=error_type,
+                    message=message,
+                    retryable=False,
+                    suggestion="该链接正文疑似非英文（例如中文/日文等），按当前策略会跳过；可更换链接后再试。",
+                )
+
+            login_markers = (
+                "login",
+                "sign in",
+                "not authorized",
+                "unauthorized",
+                "forbidden",
+                "验证",
+                "重新登录",
+                "请先登录",
+                "扫码",
+            )
+            challenge_markers = (
+                "captcha",
+                "challenge",
+                "rate",
+                "429",
+                "too many requests",
+                "suspended",
+                "temporarily",
+                "blocked",
+                "风控",
+                "限流",
+            )
+
+            if any(marker in normalized for marker in login_markers):
+                return StageError(
+                    error_type=error_type,
+                    message=message,
+                    retryable=True,
+                    suggestion=(
+                        "X 侧疑似要求登录/授权，导致抓取到空壳页面。"
+                        "请先在 Web UI 的『自动抓取 X 精品文章』区域完成一次 X 登录（保存登录态），"
+                        "然后对该任务从『x-fetch』阶段重跑。"
+                    ),
+                )
+
+            if any(marker in normalized for marker in challenge_markers):
+                return StageError(
+                    error_type=error_type,
+                    message=message,
+                    retryable=True,
+                    suggestion=(
+                        "X 侧疑似触发限流/风控挑战，抓取结果可能为空。"
+                        "建议等待 1–5 分钟后重跑，必要时先完成 X 登录以提高稳定性。"
+                    ),
+                )
+
+            if "未解析到有效正文内容" in message:
+                return StageError(
+                    error_type=error_type,
+                    message=message,
+                    retryable=True,
+                    suggestion=(
+                        "抓取到了页面但未解析出正文，常见原因是：页面结构变更、网络抖动、需要登录、或内容不可见。"
+                        "建议：先完成一次 X 登录（保存登录态）→ 从『x-fetch』阶段重跑；"
+                        "如果仍失败，把该任务的 `pipeline.log` 发我再进一步定位。"
+                    ),
+                )
+
+            return StageError(
+                error_type=error_type,
+                message=message,
+                retryable=True,
+                suggestion=(
+                    "原文抓取失败。建议先完成一次 X 登录（保存登录态）并重跑『x-fetch』；"
+                    "若仍失败，查看该任务 `pipeline.log` 和抓取调试产物以定位原因。"
+                ),
+            )
+
         if isinstance(exc, FileNotFoundError):
             return StageError(
                 error_type=error_type,
                 message=message,
                 retryable=False,
-                suggestion="Verify required input artifacts and local dependencies exist before rerunning.",
+                suggestion="请确认该阶段所需的输入产物和本地依赖都存在后再重跑。",
             )
 
         if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
@@ -317,7 +450,7 @@ class PipelineRunner:
                 error_type=error_type,
                 message=message,
                 retryable=True,
-                suggestion="Retry the job after checking local I/O, network connectivity, or dependent services.",
+                suggestion="检查本地 I/O、网络连通性或依赖服务后重试。",
             )
 
         if isinstance(exc, ValueError):
@@ -325,14 +458,14 @@ class PipelineRunner:
                 error_type=error_type,
                 message=message,
                 retryable=False,
-                suggestion="Check stage inputs and configuration before rerunning.",
+                suggestion="请检查该阶段输入与配置（参数/路径/模型设置）后再重跑。",
             )
 
         return StageError(
             error_type=error_type,
             message=message,
             retryable=False,
-            suggestion="Inspect pipeline.log and the stage inputs before rerunning.",
+            suggestion="请查看该任务的 `pipeline.log` 和该阶段输入后再重跑。",
         )
 
     def _is_non_retryable_quota_error(self, message: str) -> bool:
@@ -476,14 +609,6 @@ class PipelineRunner:
 
         if stage == "light-polish":
             return run_light_polish(
-                context=context,
-                store=self.store,
-                gateway=self.gateway,
-                settings=self.settings,
-            )
-
-        if stage == "wechat-rewrite":
-            return run_wechat_rewrite(
                 context=context,
                 store=self.store,
                 gateway=self.gateway,

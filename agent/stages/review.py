@@ -9,6 +9,7 @@ from agent.stages.base import (
     split_markdown_into_chunks,
 )
 from agent.stages.helpers import is_substantially_shorter
+from agent.stages.helpers import write_diff_asset, write_model_exchange_assets
 
 
 # 审校需要同时看原文和译文，因此把单边 chunk 控制在 6k 左右，避免整体 prompt 过长。
@@ -25,11 +26,15 @@ def build_review_input(source_markdown: str, translated_markdown: str) -> str:
 
 
 def _rebucket_chunks(chunks: list[str], *, target_count: int) -> list[str]:
-    if target_count <= 1 or len(chunks) == 1:
-        return ["\n\n".join(chunk for chunk in chunks if chunk.strip())]
+    normalized_chunks = [chunk for chunk in chunks if chunk.strip()]
+    if not normalized_chunks:
+        return []
 
-    if target_count > len(chunks):
-        expanded = [chunk for chunk in chunks if chunk.strip()]
+    if target_count <= 1:
+        return ["\n\n".join(normalized_chunks)]
+
+    if target_count > len(normalized_chunks):
+        expanded = normalized_chunks[:]
         while len(expanded) < target_count:
             split_index = max(range(len(expanded)), key=lambda index: len(expanded[index]))
             split_pair = _split_chunk_in_two(expanded[split_index])
@@ -40,11 +45,11 @@ def _rebucket_chunks(chunks: list[str], *, target_count: int) -> list[str]:
 
     bucketed: list[str] = []
     for index in range(target_count):
-        start = (index * len(chunks)) // target_count
-        end = ((index + 1) * len(chunks)) // target_count
+        start = (index * len(normalized_chunks)) // target_count
+        end = ((index + 1) * len(normalized_chunks)) // target_count
         if start == end:
-            end = min(start + 1, len(chunks))
-        bucketed.append("\n\n".join(chunk for chunk in chunks[start:end] if chunk.strip()))
+            end = min(start + 1, len(normalized_chunks))
+        bucketed.append("\n\n".join(normalized_chunks[start:end]))
     return bucketed
 
 
@@ -99,12 +104,34 @@ def run_review(
 
     outputs: list[str] = []
     for source_chunk, translated_chunk in zip(paired_source_chunks, paired_translated_chunks, strict=True):
+        call_id = f"call-{len(outputs) + 1:03d}-of-{len(paired_source_chunks):03d}"
+        user_prompt = build_review_input(source_chunk, translated_chunk)
+        write_model_exchange_assets(
+            store=store,
+            job_id=context.job_id,
+            stage="review",
+            call_id=call_id,
+            model=settings.stage_models["review"],
+            system_prompt=prompt,
+            user_prompt=user_prompt,
+            raw_response=None,
+        )
         outputs.append(
             gateway.generate_markdown(
                 model=settings.stage_models["review"],
                 system_prompt=prompt,
-                user_prompt=build_review_input(source_chunk, translated_chunk),
+                user_prompt=user_prompt,
             )
+        )
+        write_model_exchange_assets(
+            store=store,
+            job_id=context.job_id,
+            stage="review",
+            call_id=call_id,
+            model=settings.stage_models["review"],
+            system_prompt=prompt,
+            user_prompt=user_prompt,
+            raw_response=outputs[-1],
         )
 
     reviewed_markdown = outputs[0] if len(outputs) == 1 else "\n\n".join(
@@ -118,5 +145,16 @@ def run_review(
         job_id=context.job_id,
         relative_path="03-reviewed.md",
         content=reviewed_markdown,
+    )
+
+    # 为 UI 提供“审校前后改了什么”的可读 diff。
+    write_diff_asset(
+        store=store,
+        job_id=context.job_id,
+        relative_path="diff.assets/review/02-translation_vs_03-reviewed.patch",
+        before=translated_markdown,
+        after=reviewed_markdown,
+        from_label="02-translation.md",
+        to_label="03-reviewed.md",
     )
     return reviewed_markdown

@@ -71,7 +71,6 @@ def test_env_example_contains_required_configuration_keys() -> None:
     assert "X2W_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1" in env_example
     assert "X2W_MODEL_TRANSLATE=" in env_example
     assert "X2W_MODEL_REVIEW=" in env_example
-    assert "X2W_MODEL_WECHAT_REWRITE=" in env_example
 
 
 def test_backend_dev_script_restarts_existing_8000_listener(tmp_path: Path) -> None:

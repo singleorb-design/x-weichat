@@ -144,6 +144,20 @@ describe('renderWechatHtml', () => {
     expect(html).not.toContain('text-indent: 2em;')
   })
 
+  it('keeps the original article rhythm while tightening local visual details', () => {
+    const html = renderWechatHtml('## 第一节\n\n正文。\n\n## 第二节\n\n> https://github.com/example/project\n\n![图](image.png)')
+
+    expect(html).toContain('p {\n  margin: 20px 0;')
+    expect(html).toContain('line-height: 2;')
+    expect(html).toContain('border-radius: 25px;')
+    expect(html).toContain('#output section > h2:not(:first-child)')
+    expect(html).toContain('padding: 15px 12px;')
+    expect(html).toContain('letter-spacing: 0px;')
+    expect(html).toContain('line-height: 1.75;')
+    expect(html).toContain('margin: 18px auto;')
+    expect(html).not.toContain('letter-spacing: 0.1em;')
+  })
+
   it('supports CRLF frontmatter inside a wrapped markdown document', () => {
     const html = renderWechatHtml('```markdown\r\n---\r\ntitle: "CRLF 标题"\r\n---\r\n\r\n# 正文标题\r\n\r\n正文\r\n```')
 
@@ -195,6 +209,24 @@ describe('renderWechatHtml', () => {
     const html = renderWechatHtml('> https://github.com/karpathy/llm-wiki')
 
     expect(html).toContain('<blockquote class="blockquote"><p class="p">&nbsp;&nbsp;<a href="https://github.com/karpathy/llm-wiki">https://github.com/karpathy/llm-wiki</a></p></blockquote>')
+  })
+
+  it('merges adjacent blockquote blocks into a single quote group', () => {
+    const html = renderWechatHtml([
+      '> Trail of Bits 安全技能——由真正的安全工程师构建的真实安全审计工作流程。',
+      '',
+      '> https://github.com/trailofbits/claude-code-skills',
+      '',
+      '> Anthropic 官方 Skills——PDF、DOCX、XLSX 生成以及数据分析。',
+      '',
+      '> https://github.com/anthropics/skills',
+    ].join('\n'))
+
+    expect(html.match(/<blockquote class="blockquote">/g)).toHaveLength(1)
+    expect(html).toContain('&nbsp;&nbsp;Trail of Bits 安全技能')
+    expect(html).toContain('&nbsp;&nbsp;<a href="https://github.com/trailofbits/claude-code-skills">https://github.com/trailofbits/claude-code-skills</a>')
+    expect(html).toContain('&nbsp;&nbsp;Anthropic 官方 Skills')
+    expect(html).toContain('&nbsp;&nbsp;<a href="https://github.com/anthropics/skills">https://github.com/anthropics/skills</a>')
   })
 
   it('blocks entity-encoded unsafe markdown urls', () => {

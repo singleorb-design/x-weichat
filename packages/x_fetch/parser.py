@@ -5,8 +5,162 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from html import unescape
 from html.parser import HTMLParser
+from urllib.parse import urlsplit
 
 from packages.x_fetch.types import ParsedXPage
+
+
+_TWEET_LINK_ARTICLE_PATH_PATTERN = re.compile(r"(?:(?:^|/)i/articles?/\d+)|(?:/[A-Za-z0-9_]{1,15}/article/\d+)")
+_TWEET_LINK_STATUS_PATH_PATTERN = re.compile(r"^/[A-Za-z0-9_]{1,15}/status/\d+(?:/|$|[?#])")
+_TWEET_TEXT_ARTICLE_ID_PATTERN = re.compile(
+    r"x\.com\s*/\s*(?:i\s*/\s*articles?|i\s*/\s*article|[A-Za-z0-9_]{1,15}\s*/\s*article)\s*/\s*([0-9][0-9\s]{9,40})",
+    flags=re.IGNORECASE,
+)
+_TWEET_TEXT_STATUS_URL_PATTERN = re.compile(
+    r"x\.com\s*/\s*([A-Za-z0-9_]{1,15})\s*/\s*status\s*/\s*([0-9][0-9\s]{9,40})",
+    flags=re.IGNORECASE,
+)
+
+
+def _absolutize_x_href(href: str) -> str | None:
+    if not href:
+        return None
+    if href.startswith("http://") or href.startswith("https://"):
+        return href
+    if href.startswith("//"):
+        return "https:" + href
+    if href.startswith("/"):
+        return "https://x.com" + href
+    return None
+
+
+def extract_linked_x_urls_from_tweet_html(html: str) -> list[str]:
+    """从 tweet HTML 中提取正文里出现的 X 链接（优先 article，其次 status）。
+
+    典型场景：某些 tweet 只是“指针”，正文贴了另一条 status URL，
+    而那条 status 页面实际渲染的是 X Article。
+
+    返回的 URL 会去掉 query/fragment，便于后续 fetch 与去重。
+    """
+
+    try:
+        document = _parse_html_document(html)
+        tweet_node = _find_first_node(
+            document,
+            lambda node: node.tag == "article" and node.attrs.get("data-testid") == "tweet",
+        )
+        if tweet_node is None:
+            return []
+    except Exception:
+        return []
+
+    # 只在主 tweetText 范围内找链接，避免误跟随引用推文/嵌套内容里的链接。
+    tweet_text_node = _find_first_node(
+        tweet_node,
+        lambda node: node.tag == "div" and node.attrs.get("data-testid") == "tweetText",
+    )
+    link_root = tweet_text_node or tweet_node
+
+    # 先尝试从 tweetText 的纯文本里识别 X article/status（有些页面会把 URL 分段渲染/插空格）。
+    candidates: list[str] = []
+    tweet_text = _node_text(tweet_text_node) if tweet_text_node is not None else ""
+    if tweet_text:
+        for match in _TWEET_TEXT_ARTICLE_ID_PATTERN.finditer(tweet_text):
+            digits = re.sub(r"\D+", "", match.group(1) or "")
+            if len(digits) >= 10:
+                candidates.append(f"https://x.com/i/article/{digits}")
+        for match in _TWEET_TEXT_STATUS_URL_PATTERN.finditer(tweet_text):
+            user = match.group(1) or ""
+            digits = re.sub(r"\D+", "", match.group(2) or "")
+            if user and len(digits) >= 10:
+                candidates.append(f"https://x.com/{user}/status/{digits}")
+
+    for node in [link_root, *_descendant_nodes(link_root)]:
+        if node.tag != "a":
+            continue
+        href = (node.attrs.get("href") or "").strip()
+        # X 的外链常见是 t.co，真实地址可能出现在 title / data-* 中。
+        expanded = (
+            (node.attrs.get("data-expanded-url") or "").strip()
+            or (node.attrs.get("data-expandedurl") or "").strip()
+            or (node.attrs.get("data-url") or "").strip()
+            or (node.attrs.get("title") or "").strip()
+        )
+        if href.startswith("https://t.co/") or href.startswith("http://t.co/"):
+            if expanded:
+                candidates.append(expanded)
+            if href:
+                candidates.append(href)
+        else:
+            if href:
+                candidates.append(href)
+            if expanded and expanded != href:
+                candidates.append(expanded)
+
+    # 如果 tweetText 内没有找到任何候选链接，再从主 tweet 容器里扫描（跳过引用推文/嵌套 article）。
+    if not candidates and tweet_text_node is not None:
+        def is_embedded_container(node: _HTMLNode) -> bool:
+            return (
+                node.tag == "article"
+                and node is not tweet_node
+                and node.attrs.get("data-testid") in {"tweet", "article"}
+            )
+
+        stack: list[_HTMLNode] = [tweet_node]
+        while stack:
+            node = stack.pop()
+            for child in node.children:
+                if not isinstance(child, _HTMLNode):
+                    continue
+                if is_embedded_container(child):
+                    continue
+                if child.tag == "a":
+                    href = (child.attrs.get("href") or "").strip()
+                    expanded = (
+                        (child.attrs.get("data-expanded-url") or "").strip()
+                        or (child.attrs.get("data-expandedurl") or "").strip()
+                        or (child.attrs.get("data-url") or "").strip()
+                        or (child.attrs.get("title") or "").strip()
+                    )
+                    if href.startswith("https://t.co/") or href.startswith("http://t.co/"):
+                        if expanded:
+                            candidates.append(expanded)
+                        if href:
+                            candidates.append(href)
+                    else:
+                        if href:
+                            candidates.append(href)
+                        if expanded and expanded != href:
+                            candidates.append(expanded)
+                stack.append(child)
+
+    article_urls: list[str] = []
+    status_urls: list[str] = []
+    seen: set[str] = set()
+
+    for raw in candidates:
+        absolute = _absolutize_x_href(raw) or raw
+        # 只保留 X 站内链接。
+        try:
+            parsed = urlsplit(absolute)
+        except Exception:
+            continue
+        if parsed.scheme and parsed.netloc and parsed.netloc not in {"x.com", "www.x.com"}:
+            continue
+
+        # 清理 query/fragment，避免 `?s=12` 影响 pattern 与后续去重。
+        absolute = absolute.split("#", 1)[0].split("?", 1)[0]
+        if absolute in seen:
+            continue
+        seen.add(absolute)
+
+        path = urlsplit(absolute).path
+        if _TWEET_LINK_ARTICLE_PATH_PATTERN.search(path):
+            article_urls.append(absolute)
+        elif _TWEET_LINK_STATUS_PATH_PATTERN.match(path):
+            status_urls.append(absolute)
+
+    return [*article_urls, *status_urls]
 
 
 def parse_x_html(html: str, url: str) -> ParsedXPage:

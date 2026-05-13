@@ -133,6 +133,36 @@ function unwrapTopLevelMarkdownFence(markdown: string): string {
   return withoutOpeningFence.replace(/\n```\s*$/i, '')
 }
 
+function mergeAdjacentBlockquoteBlocks(markdown: string): string {
+  const blocks = markdown.split(/\n{2,}/)
+  const merged: string[] = []
+  let pendingQuote: string | null = null
+
+  for (const block of blocks) {
+    const isQuoteBlock = block
+      .split('\n')
+      .filter((line) => line.trim() !== '')
+      .every((line) => line.trimStart().startsWith('>'))
+
+    if (isQuoteBlock) {
+      pendingQuote = pendingQuote === null ? block : `${pendingQuote}\n>\n${block}`
+      continue
+    }
+
+    if (pendingQuote !== null) {
+      merged.push(pendingQuote)
+      pendingQuote = null
+    }
+    merged.push(block)
+  }
+
+  if (pendingQuote !== null) {
+    merged.push(pendingQuote)
+  }
+
+  return merged.join('\n\n')
+}
+
 function splitFrontmatter(markdown: string): { body: string; frontmatter: string | null } {
   if (!markdown.startsWith('---\n')) {
     return { body: markdown, frontmatter: null }
@@ -164,7 +194,8 @@ function extractTitle(frontmatter: string | null, body: string): string {
 export function renderWechatHtml(markdown: string): string {
   const normalizedMarkdown = unwrapTopLevelMarkdownFence(normalizeMarkdownInput(markdown))
   const { body: renderableMarkdown, frontmatter } = splitFrontmatter(normalizedMarkdown)
-  const title = extractTitle(frontmatter, renderableMarkdown)
+  const mergedMarkdown = mergeAdjacentBlockquoteBlocks(renderableMarkdown)
+  const title = extractTitle(frontmatter, mergedMarkdown)
   const renderer = new Renderer()
   const listOrderedStack: boolean[] = []
   const listCounters: number[] = []
@@ -269,7 +300,7 @@ export function renderWechatHtml(markdown: string): string {
   renderer.tablecell = (token) => styledContent('td', renderer.parser.parseInline(token.tokens))
   renderer.hr = () => styledContent('hr', '')
 
-  const body = marked.parse(renderableMarkdown, {
+  const body = marked.parse(mergedMarkdown, {
     async: false,
     renderer,
   }) as string

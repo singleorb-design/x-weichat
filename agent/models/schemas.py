@@ -3,21 +3,20 @@ from typing import ClassVar, Literal, get_args
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-JobStatus = Literal["pending", "running", "succeeded", "failed"]
+JobStatus = Literal["pending", "running", "succeeded", "failed", "canceled", "published"]
 StageName = Literal[
     "x-fetch",
     "translate",
     "review",
     "route",
     "light-polish",
-    "wechat-rewrite",
     "final-check",
     "targeted-fix",
     "final-output",
     "render-html",
 ]
 RetryMode = Literal["failed-stage", "from-stage"]
-RouteDecisionName = Literal["PASS", "LIGHT_POLISH", "REWRITE"]
+RouteDecisionName = Literal["PASS", "LIGHT_POLISH"]
 RiskLevel = Literal["LOW", "MEDIUM", "HIGH"]
 StageProbeStatus = Literal["passed", "failed"]
 
@@ -146,6 +145,7 @@ class JobRecord(BaseModel):
 
     job_id: str
     url: str
+    source_title: str | None = None
     created_at: str
     status: JobStatus = "pending"
     current_stage: str | None = None
@@ -220,9 +220,15 @@ class JobRecord(BaseModel):
         ):
             raise ValueError("running status requires started_at and no finished_at")
 
-        if self.status in {"succeeded", "failed"} and (
+        if self.status in {"succeeded", "failed", "published"} and (
             self.started_at is None or self.finished_at is None
         ):
             raise ValueError("terminal status requires started_at and finished_at")
+
+        # canceled 允许两种情况：
+        # - 运行中被用户手动停止：started_at 与 finished_at 都会有
+        # - pending 阶段被取消：started_at 可能为空，但仍应有 finished_at
+        if self.status == "canceled" and self.finished_at is None:
+            raise ValueError("canceled status requires finished_at")
 
         return self

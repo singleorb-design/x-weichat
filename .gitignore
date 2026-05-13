@@ -1,0 +1,35 @@
+# Generated artifacts (job workspaces, logs, previews)
+artifacts/
+
+# Python caches
+**/__pycache__/
+*.py[cod]
+*.pyd
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+
+# Virtual env
+.venv/
+
+# Local agent / tooling outputs
+.agents/
+.superpowers/
+graphify-out/
+skills-lock.json
+
+# Project-specific outputs you asked to ignore
+diagram/
+docs/
+
+# Node build outputs and caches
+node_modules/
+**/node_modules/
+apps/web/dist/
+packages/renderer/dist/
+**/.vite/
+**/vitest/results.json

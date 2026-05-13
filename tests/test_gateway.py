@@ -49,11 +49,16 @@ class FakeCompletions:
 
 class FakeClient:
     def __init__(self, response: FakeResponse) -> None:
+        self.last_timeout: float | None = None
         self.chat = type(
             "FakeChat",
             (),
             {"completions": FakeCompletions(response=response)},
         )()
+
+    def with_options(self, *, timeout: float):
+        self.last_timeout = timeout
+        return self
 
 
 class FlakyCompletions:
@@ -94,6 +99,20 @@ def test_generate_markdown_returns_first_choice_content() -> None:
         {"role": "user", "content": "[System]\n系统提示\n\n[User]\n用户提示"},
     ]
     assert client.chat.completions.kwargs["temperature"] == 0.3
+
+
+def test_generate_markdown_uses_per_request_timeout_when_provided() -> None:
+    client = FakeClient(response=FakeResponse(choices=[FakeChoice(content="# 输出 Markdown")]))
+    gateway = ModelGateway(api_key="test-key", base_url="https://example.com", client=client)
+
+    gateway.generate_markdown(
+        model="qwen-mt-plus",
+        system_prompt="系统提示",
+        user_prompt="用户提示",
+        request_timeout_seconds=12.5,
+    )
+
+    assert client.last_timeout == 12.5
 
 
 def test_generate_markdown_raises_for_empty_choices() -> None:
@@ -181,19 +200,16 @@ def test_probe_stage_models_checks_each_stage() -> None:
         {
             "translate": "qwen-mt-plus",
             "light-polish": "qwen-mt-plus",
-            "wechat-rewrite": "qwen-mt-plus",
         }
     )
 
     assert results == {
         "translate": "qwen-mt-plus",
         "light-polish": "qwen-mt-plus",
-        "wechat-rewrite": "qwen-mt-plus",
     }
     assert probe_calls == [
         ("qwen-mt-plus", "translate"),
         ("qwen-mt-plus", "light-polish"),
-        ("qwen-mt-plus", "wechat-rewrite"),
     ]
 
 

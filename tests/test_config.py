@@ -13,8 +13,6 @@ def test_settings_defaults_include_all_stage_models(monkeypatch) -> None:
         "X2W_TRANSLATE_MODEL",
         "X2W_MODEL_REVIEW",
         "X2W_REVIEW_MODEL",
-        "X2W_MODEL_WECHAT_REWRITE",
-        "X2W_WECHAT_REWRITE_MODEL",
     ]:
         monkeypatch.delenv(name, raising=False)
 
@@ -27,8 +25,7 @@ def test_settings_defaults_include_all_stage_models(monkeypatch) -> None:
         "route": "qwen-plus",
         "final-check": "qwen-plus",
         "light-polish": "qwen-plus",
-        "wechat-rewrite": "qwen-plus",
-        "targeted-fix": "qwen-plus",
+        "targeted-fix": "qwen-mt-plus",
     }
     assert settings.x_storage_state_path is None
 
@@ -70,7 +67,6 @@ def test_settings_constructor_values_override_dotenv_file(monkeypatch, tmp_path)
                 "X2W_API_KEY=file-key",
                 "X2W_MODEL_TRANSLATE=qwen-mt-plus",
                 "X2W_MODEL_REVIEW=qwen-plus",
-                "X2W_MODEL_WECHAT_REWRITE=qwen-plus",
             ]
         )
         + "\n",
@@ -81,7 +77,6 @@ def test_settings_constructor_values_override_dotenv_file(monkeypatch, tmp_path)
         api_key="constructor-key",
         model_translate="translate-model",
         model_review="review-model",
-        model_wechat_rewrite="rewrite-model",
     )
 
     assert settings.api_key == "constructor-key"
@@ -91,8 +86,7 @@ def test_settings_constructor_values_override_dotenv_file(monkeypatch, tmp_path)
         "route": "review-model",
         "final-check": "review-model",
         "light-polish": "review-model",
-        "wechat-rewrite": "rewrite-model",
-        "targeted-fix": "rewrite-model",
+        "targeted-fix": "translate-model",
     }
 
 
@@ -101,14 +95,12 @@ def test_settings_load_values_from_primary_env_names(monkeypatch) -> None:
         "X2W_MODEL_PROVIDER",
         "X2W_TRANSLATE_MODEL",
         "X2W_REVIEW_MODEL",
-        "X2W_WECHAT_REWRITE_MODEL",
     ]:
         monkeypatch.delenv(name, raising=False)
 
     monkeypatch.setenv("X2W_PROVIDER", "openai")
     monkeypatch.setenv("X2W_MODEL_TRANSLATE", "gpt-4.1-mini")
     monkeypatch.setenv("X2W_MODEL_REVIEW", "gpt-4.1")
-    monkeypatch.setenv("X2W_MODEL_WECHAT_REWRITE", "gpt-4.1-nano")
 
     settings = Settings()
 
@@ -119,8 +111,7 @@ def test_settings_load_values_from_primary_env_names(monkeypatch) -> None:
         "route": "gpt-4.1",
         "final-check": "gpt-4.1",
         "light-polish": "gpt-4.1",
-        "wechat-rewrite": "gpt-4.1-nano",
-        "targeted-fix": "gpt-4.1-nano",
+        "targeted-fix": "gpt-4.1-mini",
     }
 
 
@@ -129,14 +120,12 @@ def test_settings_load_values_from_compatible_env_names(monkeypatch) -> None:
         "X2W_PROVIDER",
         "X2W_MODEL_TRANSLATE",
         "X2W_MODEL_REVIEW",
-        "X2W_MODEL_WECHAT_REWRITE",
     ]:
         monkeypatch.delenv(name, raising=False)
 
     monkeypatch.setenv("X2W_MODEL_PROVIDER", "qwen")
     monkeypatch.setenv("X2W_TRANSLATE_MODEL", "qwen-mt-plus")
     monkeypatch.setenv("X2W_REVIEW_MODEL", "qwen-mt-plus")
-    monkeypatch.setenv("X2W_WECHAT_REWRITE_MODEL", "qwen-mt-plus")
 
     settings = Settings()
 
@@ -147,7 +136,6 @@ def test_settings_load_values_from_compatible_env_names(monkeypatch) -> None:
         "route": "qwen-mt-plus",
         "final-check": "qwen-mt-plus",
         "light-polish": "qwen-mt-plus",
-        "wechat-rewrite": "qwen-mt-plus",
         "targeted-fix": "qwen-mt-plus",
     }
 

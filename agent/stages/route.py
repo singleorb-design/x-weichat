@@ -11,6 +11,7 @@ from agent.stages.helpers import (
     dump_json,
     normalize_route_payload,
     read_json_artifact,
+    write_model_exchange_assets,
     write_json_artifact,
 )
 
@@ -23,7 +24,7 @@ def build_route_input(
     source_stats: dict[str, int],
 ) -> str:
     return (
-        "请根据下面的已审校译文和原文结构信息，判断它应该 PASS、LIGHT_POLISH 还是 REWRITE。\n\n"
+        "请根据下面的已审校译文和原文结构信息，判断它应该 PASS 还是 LIGHT_POLISH。\n\n"
         f"【来源元信息】\n{dump_json(metadata)}\n"
         f"【原文结构摘要】\n{source_outline}\n\n"
         f"【原文结构统计】\n{dump_json(source_stats)}\n"
@@ -41,15 +42,37 @@ def run_route(
     source_markdown = read_stage_markdown(store=store, context=context, relative_path="01-source.md")
     reviewed_markdown = read_stage_markdown(store=store, context=context, relative_path="03-reviewed.md")
     metadata = read_json_artifact(store=store, job_id=context.job_id, relative_path="metadata.json")
+    system_prompt = load_prompt("route_zh.txt")
+    user_prompt = build_route_input(
+        reviewed_markdown=reviewed_markdown,
+        metadata=metadata,
+        source_outline=build_markdown_outline(source_markdown),
+        source_stats=count_markdown_features(source_markdown),
+    )
+    write_model_exchange_assets(
+        store=store,
+        job_id=context.job_id,
+        stage="route",
+        call_id="attempt-1",
+        model=settings.stage_models["route"],
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        raw_response=None,
+    )
     raw_response = gateway.generate_markdown(
         model=settings.stage_models["route"],
-        system_prompt=load_prompt("route_zh.txt"),
-        user_prompt=build_route_input(
-            reviewed_markdown=reviewed_markdown,
-            metadata=metadata,
-            source_outline=build_markdown_outline(source_markdown),
-            source_stats=count_markdown_features(source_markdown),
-        ),
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+    )
+    write_model_exchange_assets(
+        store=store,
+        job_id=context.job_id,
+        stage="route",
+        call_id="attempt-1",
+        model=settings.stage_models["route"],
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        raw_response=raw_response,
     )
     payload = normalize_route_payload(
         raw_response,

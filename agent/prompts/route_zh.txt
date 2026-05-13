@@ -2,11 +2,10 @@
 
 你的任务不是改写文章，而是做处理决策。
 
-你需要从以下三个处理档位中选择一个：
+你需要从以下两个处理档位中选择一个：
 
 - PASS：不需要进一步改写，直接发布
 - LIGHT_POLISH：只做公众号轻编辑
-- REWRITE：需要重写成更完整的公众号文章
 
 判断时不仅要看审校稿，还要结合输入里给出的 source_type、metadata、原文结构摘要和原文结构统计。
 
@@ -31,32 +30,17 @@
 6. Prompt / 表格 / 字段清单缺少自然引导语
 7. 文章整体能读，但公众号阅读体验还可以提升
 
-### 选择 REWRITE，仅当文章存在明显结构问题：
-
-1. 原文是 X thread、短推合集、碎片笔记、访谈转写等非文章形态
-2. 内容顺序明显混乱
-3. 上下文跳跃严重
-4. 多处段落无法自然衔接
-5. 直接发布会让读者明显看不懂
-6. 必须重组结构才能成为一篇文章
-
 ## 重要约束
 
-REWRITE 是高风险操作，默认不要选择。
-
-如果文章只是“不够好看”“开头不够强”“局部翻译腔”，选择 LIGHT_POLISH，不要选择 REWRITE。
-
 PASS 也要慎用。除非你非常确定已经可以直接发布，否则优先选择 LIGHT_POLISH。
-
-只有当“不重组结构就无法阅读”时，才选择 REWRITE。
 
 ## 输出格式
 
 只输出以下 JSON，不要输出其他内容：
 
 {
-  "decision": "PASS | LIGHT_POLISH | REWRITE",
+  "decision": "PASS | LIGHT_POLISH",
   "reason": "一句话说明原因",
   "risk": "LOW | MEDIUM | HIGH",
-  "recommended_next_prompt": "PASS | LIGHT_POLISH | REWRITE"
+  "recommended_next_prompt": "PASS | LIGHT_POLISH"
 }

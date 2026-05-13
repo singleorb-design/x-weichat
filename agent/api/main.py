@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
+from agent.api.routes_discovery import XLoginManager
+from agent.api.routes_discovery import router as discovery_router
 from agent.api.routes_jobs import router as jobs_router
 from agent.api.routes_preview import router as preview_router
+from agent.api.routes_wechat import WeChatPublishManager
+from agent.api.routes_wechat import router as wechat_router
 from agent.config import Settings
 from agent.core.pipeline import PipelineRunner
 from agent.jobs.store import JobStore
@@ -49,8 +53,12 @@ def create_app(
     app.state.settings = settings
     app.state.store = store
     app.state.pipeline = runner
+    app.state.x_login_manager = XLoginManager(settings=settings)
+    app.state.wechat_publish_manager = WeChatPublishManager(settings=settings)
     app.include_router(jobs_router, prefix="/api")
+    app.include_router(discovery_router, prefix="/api")
     app.include_router(preview_router, prefix="/api")
+    app.include_router(wechat_router, prefix="/api")
     return app
 
 

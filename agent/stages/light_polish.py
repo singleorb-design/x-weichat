@@ -81,6 +81,7 @@ def run_light_polish(
             build_input=lambda markdown: build_light_polish_input(markdown, metadata),
             build_chunk_input=lambda markdown, chunk: build_light_polish_chunk_input(markdown, metadata, chunk),
             max_chars_per_request=chunk_size,
+            trace_stage="light-polish",
         )
         if not is_substantially_shorter(
             reviewed_markdown,

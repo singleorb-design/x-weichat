@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 
@@ -338,7 +339,7 @@ def test_run_x_fetch_writes_source_markdown(monkeypatch, tmp_path: Path) -> None
 
     artifact_path = tmp_path / job.job_id / "01-source.md"
     assert markdown == artifact_path.read_text(encoding="utf-8")
-    assert markdown.startswith("# X Article: Shipping AI Agents")
+    assert "# X Article: Shipping AI Agents" in markdown
 
 
 def test_run_x_fetch_writes_source_markdown_for_user_article_url(monkeypatch, tmp_path: Path) -> None:
@@ -355,7 +356,358 @@ def test_run_x_fetch_writes_source_markdown_for_user_article_url(monkeypatch, tm
 
     artifact_path = tmp_path / job.job_id / "01-source.md"
     assert markdown == artifact_path.read_text(encoding="utf-8")
-    assert markdown.startswith("# X Article: Shipping AI Agents")
+    assert "# X Article: Shipping AI Agents" in markdown
+
+
+def test_run_x_fetch_redirects_tweet_to_linked_article_status(monkeypatch, tmp_path: Path) -> None:
+    tweet_url = "https://x.com/karlmehta/status/2051346282434945129?s=12"
+    linked_status_url = "https://x.com/karlmehta/status/2050561514306687291"
+    tweet_html = f"""
+    <!DOCTYPE html>
+    <html lang=\"en\">
+      <body>
+        <main>
+          <article data-testid=\"tweet\">
+            <div data-testid=\"User-Name\">
+              <a href=\"/karlmehta\">
+                <span>Karl</span>
+                <span>@karlmehta</span>
+              </a>
+            </div>
+            <div data-testid=\"tweetText\">
+              <span>Pointer tweet.</span>
+              <a href=\"/karlmehta/status/2050561514306687291?s=12\">{linked_status_url}</a>
+            </div>
+          </article>
+        </main>
+      </body>
+    </html>
+    """
+    article_html = (FIXTURES_DIR / "x_article.html").read_text(encoding="utf-8")
+    store = JobStore(root_dir=tmp_path)
+    job = store.create_job(url=tweet_url)
+
+    calls: list[str] = []
+
+    def fake_fetch(url: str, storage_state=None) -> str:
+        calls.append(url)
+        if url == tweet_url:
+            return tweet_html
+        if url == linked_status_url:
+            return article_html
+        raise AssertionError(f"unexpected url: {url}")
+
+    monkeypatch.setattr("agent.stages.x_fetch.fetch_x_page", fake_fetch)
+
+    markdown = run_x_fetch(
+        FakeContext(job_id=job.job_id, url=job.url),
+        store,
+    )
+
+    assert calls == [tweet_url, linked_status_url]
+    assert "# X Article: Shipping AI Agents" in markdown
+    metadata_path = tmp_path / job.job_id / "metadata.json"
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert payload["requestedUrl"] == tweet_url
+    assert payload["source_type"] == "article"
+
+
+def test_run_x_fetch_does_not_redirect_when_only_quote_tweet_has_status_link(monkeypatch, tmp_path: Path) -> None:
+    tweet_url = "https://x.com/alice/status/1"
+    quote_status_url = "https://x.com/bob/status/2"
+    html = f"""
+    <!DOCTYPE html>
+    <html lang=\"en\">
+      <body>
+        <main>
+          <article data-testid=\"tweet\">
+            <div data-testid=\"User-Name\">
+              <a href=\"/alice\"><span>Alice</span><span>@alice</span></a>
+            </div>
+            <div data-testid=\"tweetText\"><span>Main tweet has no links.</span></div>
+            <section>
+              <article data-testid=\"tweet\">
+                <div data-testid=\"User-Name\">
+                  <a href=\"/bob\"><span>Bob</span><span>@bob</span></a>
+                </div>
+                <div data-testid=\"tweetText\">
+                  <a href=\"/bob/status/2?s=12\">{quote_status_url}</a>
+                </div>
+              </article>
+            </section>
+          </article>
+        </main>
+      </body>
+    </html>
+    """
+    store = JobStore(root_dir=tmp_path)
+    job = store.create_job(url=tweet_url)
+    calls: list[str] = []
+
+    def fake_fetch(url: str, storage_state=None) -> str:
+        calls.append(url)
+        if url == tweet_url:
+            return html
+        raise AssertionError(f"should not fetch redirect candidate: {url}")
+
+    monkeypatch.setattr("agent.stages.x_fetch.fetch_x_page", fake_fetch)
+
+    markdown = run_x_fetch(FakeContext(job_id=job.job_id, url=job.url), store)
+
+    assert calls == [tweet_url]
+    assert "# Alice (@alice)" in markdown
+    assert "Main tweet has no links." in markdown
+    payload = json.loads((tmp_path / job.job_id / "metadata.json").read_text(encoding="utf-8"))
+    assert payload["requestedUrl"] == tweet_url
+    assert payload["source_type"] == "tweet"
+
+
+def test_run_x_fetch_redirects_tweet_to_article_when_link_is_tco_with_expanded_title(monkeypatch, tmp_path: Path) -> None:
+    tweet_url = "https://x.com/alice/status/10"
+    linked_status_url = "https://x.com/alice/status/20"
+    tweet_html = f"""
+    <!DOCTYPE html>
+    <html lang=\"en\">
+      <body>
+        <main>
+          <article data-testid=\"tweet\">
+            <div data-testid=\"User-Name\">
+              <a href=\"/alice\"><span>Alice</span><span>@alice</span></a>
+            </div>
+            <div data-testid=\"tweetText\">
+              <a href=\"https://t.co/abc\" title=\"{linked_status_url}?s=12\">t.co/abc</a>
+            </div>
+          </article>
+        </main>
+      </body>
+    </html>
+    """
+    article_html = (FIXTURES_DIR / "x_article.html").read_text(encoding="utf-8")
+    store = JobStore(root_dir=tmp_path)
+    job = store.create_job(url=tweet_url)
+    calls: list[str] = []
+
+    def fake_fetch(url: str, storage_state=None) -> str:
+        calls.append(url)
+        if url == tweet_url:
+            return tweet_html
+        if url == linked_status_url:
+            return article_html
+        raise AssertionError(f"unexpected url: {url}")
+
+    monkeypatch.setattr("agent.stages.x_fetch.fetch_x_page", fake_fetch)
+
+    markdown = run_x_fetch(FakeContext(job_id=job.job_id, url=job.url), store)
+
+    assert calls == [tweet_url, linked_status_url]
+    assert "# X Article: Shipping AI Agents" in markdown
+    payload = json.loads((tmp_path / job.job_id / "metadata.json").read_text(encoding="utf-8"))
+    assert payload["requestedUrl"] == tweet_url
+    assert payload["source_type"] == "article"
+
+
+def test_run_x_fetch_redirects_tweet_to_article_when_tweettext_contains_spaced_article_url(monkeypatch, tmp_path: Path) -> None:
+    tweet_url = "https://x.com/nicbstme/status/2051131906327212298?s=12"
+    article_id = "2051116213770883072"
+    article_url = f"https://x.com/i/article/{article_id}"
+    tweet_html = f"""
+    <!DOCTYPE html>
+    <html lang=\"en\">
+      <body>
+        <main>
+          <article data-testid=\"tweet\">
+            <div data-testid=\"User-Name\">
+              <a href=\"/nicbstme\"><span>Nicolas Bustamante</span><span>@nicbstme</span></a>
+            </div>
+            <div data-testid=\"tweetText\">
+              http:// x.com/i/article/{article_id[:4]} {article_id[4:]} …
+            </div>
+          </article>
+        </main>
+      </body>
+    </html>
+    """
+    article_html = (FIXTURES_DIR / "x_article.html").read_text(encoding="utf-8")
+    store = JobStore(root_dir=tmp_path)
+    job = store.create_job(url=tweet_url)
+    calls: list[str] = []
+
+    def fake_fetch(url: str, storage_state=None) -> str:
+        calls.append(url)
+        if url == tweet_url:
+            return tweet_html
+        if url == article_url:
+            return article_html
+        raise AssertionError(f"unexpected url: {url}")
+
+    monkeypatch.setattr("agent.stages.x_fetch.fetch_x_page", fake_fetch)
+
+    markdown = run_x_fetch(FakeContext(job_id=job.job_id, url=job.url), store)
+
+    assert calls == [tweet_url, article_url]
+    assert "# X Article: Shipping AI Agents" in markdown
+    payload = json.loads((tmp_path / job.job_id / "metadata.json").read_text(encoding="utf-8"))
+    assert payload["requestedUrl"] == tweet_url
+    assert payload["source_type"] == "article"
+
+
+def test_run_x_fetch_falls_back_to_skill_when_redirected_article_dom_fetch_times_out(monkeypatch, tmp_path: Path) -> None:
+    tweet_url = "https://x.com/nicbstme/status/2051131906327212298?s=12"
+    article_url = "https://x.com/i/article/2051116213770883072"
+    tweet_html = """
+    <!DOCTYPE html>
+    <html lang="en">
+      <body>
+        <main>
+          <article data-testid="tweet">
+            <div data-testid="User-Name">
+              <a href="/nicbstme"><span>Nicolas Bustamante</span><span>@nicbstme</span></a>
+            </div>
+            <div data-testid="tweetText">
+              http:// x.com/i/article/2051 116213770883072 …
+            </div>
+          </article>
+        </main>
+      </body>
+    </html>
+    """
+    store = JobStore(root_dir=tmp_path)
+    job = store.create_job(url=tweet_url)
+    calls: list[str] = []
+
+    def fake_fetch(url: str, storage_state=None) -> str:
+        calls.append(url)
+        if url == tweet_url:
+            return tweet_html
+        if url == article_url:
+            raise XFetchError("Timed out waiting for X content after DOMContentLoaded")
+        raise AssertionError(f"unexpected url: {url}")
+
+    skill_markdown = (
+        "---\nurl: \"https://x.com/i/article/2051116213770883072\"\n---\n\n"
+        "# Model-Harness-Fit\n\n"
+        "This is a long enough body to pass the empty-markdown heuristic.\n"
+    )
+
+    def fake_skill(
+        url: str,
+        *,
+        output_dir: str | Path | None = None,
+        media_output_dir: str | Path | None = None,
+        media_link_prefix: str | None = None,
+    ) -> str:
+        assert url == article_url
+        return skill_markdown
+
+    monkeypatch.setattr("agent.stages.x_fetch.fetch_x_page", fake_fetch)
+    # 避免触发 GraphQL 网络兜底，专测 skill fallback。
+    monkeypatch.setattr(
+        "agent.stages.x_fetch.resolve_article_markdown_from_status_url_graphql",
+        lambda *_args, **_kwargs: None,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "agent.stages.x_fetch.fetch_article_markdown_via_graphql",
+        lambda *_args, **_kwargs: None,
+        raising=False,
+    )
+    monkeypatch.setattr("agent.stages.x_fetch.fetch_x_markdown_with_skill", fake_skill, raising=False)
+
+    markdown = run_x_fetch(FakeContext(job_id=job.job_id, url=job.url), store)
+
+    assert calls == [tweet_url, article_url]
+    assert markdown == skill_markdown
+    payload = json.loads((tmp_path / job.job_id / "metadata.json").read_text(encoding="utf-8"))
+    assert payload["requestedUrl"] == tweet_url
+    assert payload["source_type"] == "article"
+
+
+def test_run_x_fetch_falls_back_to_graphql_article_when_article_dom_fetch_times_out(monkeypatch, tmp_path: Path) -> None:
+    tweet_url = "https://x.com/nicbstme/status/2051131906327212298?s=12"
+    article_url = "https://x.com/i/article/2051116213770883072"
+    tweet_html = """
+    <!DOCTYPE html>
+    <html lang="en">
+      <body>
+        <main>
+          <article data-testid="tweet">
+            <div data-testid="User-Name">
+              <a href="/nicbstme"><span>Nicolas Bustamante</span><span>@nicbstme</span></a>
+            </div>
+            <div data-testid="tweetText">
+              http:// x.com/i/article/2051 116213770883072 …
+            </div>
+          </article>
+        </main>
+      </body>
+    </html>
+    """
+    store = JobStore(root_dir=tmp_path)
+    job = store.create_job(url=tweet_url)
+    calls: list[str] = []
+
+    def fake_fetch(url: str, storage_state=None) -> str:
+        calls.append(url)
+        if url == tweet_url:
+            return tweet_html
+        if url == article_url:
+            raise XFetchError("Timed out waiting for X content after DOMContentLoaded")
+        raise AssertionError(f"unexpected url: {url}")
+
+    graphql_markdown = "# Model-Harness-Fit\n\nGraphQL body is present.\n"
+
+    monkeypatch.setattr("agent.stages.x_fetch.fetch_x_page", fake_fetch)
+    # 避免触发 status GraphQL 网络兜底，专测 article GraphQL 兜底。
+    monkeypatch.setattr(
+        "agent.stages.x_fetch.resolve_article_markdown_from_status_url_graphql",
+        lambda *_args, **_kwargs: None,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "agent.stages.x_fetch.fetch_article_markdown_via_graphql",
+        lambda url, storage_state=None: graphql_markdown if url == article_url else None,
+        raising=False,
+    )
+
+    # 不应落到 skill。
+    monkeypatch.setattr(
+        "agent.stages.x_fetch.fetch_x_markdown_with_skill",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("skill should not be called")),
+        raising=False,
+    )
+
+    markdown = run_x_fetch(FakeContext(job_id=job.job_id, url=job.url), store)
+
+    assert calls == [tweet_url, article_url]
+    assert markdown == graphql_markdown
+    payload = json.loads((tmp_path / job.job_id / "metadata.json").read_text(encoding="utf-8"))
+    assert payload["requestedUrl"] == tweet_url
+    assert payload["source_type"] == "article"
+
+
+def test_run_x_fetch_falls_back_to_graphql_status_when_tweet_dom_fetch_fails(monkeypatch, tmp_path: Path) -> None:
+    tweet_url = "https://x.com/nicbstme/status/2051131906327212298?s=12"
+    resolved_article_url = "https://x.com/i/article/2051116213770883072"
+    resolved_markdown = "# Model-Harness-Fit\n\nResolved from status via GraphQL.\n"
+    store = JobStore(root_dir=tmp_path)
+    job = store.create_job(url=tweet_url)
+
+    def fail_fetch(_url: str, storage_state=None) -> str:
+        raise XFetchError("Timed out waiting for X content")
+
+    monkeypatch.setattr("agent.stages.x_fetch.fetch_x_page", fail_fetch)
+    monkeypatch.setattr(
+        "agent.stages.x_fetch.resolve_article_markdown_from_status_url_graphql",
+        lambda url, storage_state=None: (resolved_article_url, resolved_markdown) if url == tweet_url else None,
+        raising=False,
+    )
+
+    markdown = run_x_fetch(FakeContext(job_id=job.job_id, url=job.url), store)
+
+    assert markdown == resolved_markdown
+    payload = json.loads((tmp_path / job.job_id / "metadata.json").read_text(encoding="utf-8"))
+    assert payload["requestedUrl"] == tweet_url
+    assert payload["source_type"] == "article"
 
 
 def test_run_x_fetch_falls_back_to_skill_markdown_for_article_timeout(

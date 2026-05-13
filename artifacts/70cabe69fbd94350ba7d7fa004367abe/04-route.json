@@ -1,6 +1,0 @@
-{
-  "decision": "LIGHT_POLISH",
-  "reason": "文章结构清晰，技术信息完整，但标题和开头略显平淡，部分段落衔接稍有跳跃，整体可读性较好，适合公众号发布。",
-  "risk": "LOW",
-  "recommended_next_prompt": "LIGHT_POLISH"
-}

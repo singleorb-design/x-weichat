@@ -149,7 +149,7 @@ def test_list_jobs_returns_recent_jobs_from_sqlite_index(tmp_path: Path) -> None
     assert (tmp_path / "jobs.sqlite3").is_file()
 
 
-def test_delete_job_removes_job_directory_and_sqlite_index(tmp_path: Path) -> None:
+def test_delete_job_moves_job_to_trash_and_hides_from_list(tmp_path: Path) -> None:
     store = JobStore(root_dir=tmp_path)
     job = store.create_job(url="https://x.com/alice/status/1")
     store.write_artifact(
@@ -162,6 +162,8 @@ def test_delete_job_removes_job_directory_and_sqlite_index(tmp_path: Path) -> No
 
     assert not (tmp_path / job.job_id).exists()
     assert [item.job_id for item in store.list_jobs()] == []
+    assert (tmp_path / ".trash" / job.job_id).is_dir()
+    assert [item.job_id for item in store.list_trashed_jobs()] == [job.job_id]
     with pytest.raises(FileNotFoundError):
         store.read_job(job.job_id)
 
@@ -202,6 +204,43 @@ def test_delete_job_allows_stale_claimed_pending_job(tmp_path: Path) -> None:
     store.delete_job(job.job_id)
 
     assert not (tmp_path / job.job_id).exists()
+    assert (tmp_path / ".trash" / job.job_id).is_dir()
+
+
+def test_restore_job_moves_job_back_from_trash(tmp_path: Path) -> None:
+    store = JobStore(root_dir=tmp_path)
+    job = store.create_job(url="https://x.com/alice/status/1")
+    store.write_artifact(job_id=job.job_id, relative_path="01-source.md", content="# source\n")
+
+    store.delete_job(job.job_id)
+
+    restored = store.restore_job(job.job_id)
+
+    assert restored.job_id == job.job_id
+    assert (tmp_path / job.job_id).is_dir()
+    assert not (tmp_path / ".trash" / job.job_id).exists()
+    assert [item.job_id for item in store.list_jobs()] == [job.job_id]
+    assert store.list_trashed_jobs() == []
+
+
+def test_cleanup_expired_trash_removes_items_after_retention(tmp_path: Path) -> None:
+    store = JobStore(root_dir=tmp_path)
+    job = store.create_job(url="https://x.com/alice/status/1")
+    store.delete_job(job.job_id)
+
+    expired_at = (datetime.now(timezone.utc) - JobStore.TRASH_RETENTION - timedelta(seconds=1)).isoformat()
+    with store._connect_db() as conn:
+        conn.execute(
+            "UPDATE jobs SET trashed_at = ? WHERE job_id = ?",
+            (expired_at, job.job_id),
+        )
+
+    removed = store.cleanup_expired_trash()
+
+    assert removed == 1
+    assert not (tmp_path / ".trash" / job.job_id).exists()
+    assert store.list_jobs() == []
+    assert store.list_trashed_jobs() == []
 
 
 def test_reset_for_retry_from_review_clears_tail_artifacts_and_metadata(tmp_path: Path) -> None:
@@ -212,13 +251,6 @@ def test_reset_for_retry_from_review_clears_tail_artifacts_and_metadata(tmp_path
         "01-source.md",
         "02-translation.md",
         "03-reviewed.md",
-        "04-route.json",
-        "05-polished.md",
-        "06-rewritten.md",
-        "07-final-candidate.md",
-        "08-final-check.json",
-        "09-final-fixed.md",
-        "final_check_after_fix.json",
         "10-final.md",
         "11-wechat.html",
     ]:
@@ -248,29 +280,21 @@ def test_reset_for_retry_from_review_clears_tail_artifacts_and_metadata(tmp_path
     )
     store.update_stage_metadata(
         job_id=job.job_id,
-        stage="wechat-rewrite",
-        provider="qwen",
-        model="qwen-mt-plus",
-        prompt_version="wechat_rewrite_zh.txt",
+        stage="render-html",
+        provider="builtin",
+        model="local:render-html",
         duration=2.3,
         error={
             "error_type": "RuntimeError",
-            "message": "rewrite failed",
+            "message": "render failed",
             "retryable": True,
-            "suggestion": "retry rewrite",
+            "suggestion": "retry render-html",
         },
-    )
-    store.update_stage_probe(
-        job_id=job.job_id,
-        stage="wechat-rewrite",
-        status="failed",
-        message="probe failed",
-        checked_at="2026-05-04T00:00:01Z",
     )
     failed = store.update_status(
         job_id=job.job_id,
         status="failed",
-        current_stage="wechat-rewrite",
+        current_stage="render-html",
     )
 
     reset = store.reset_for_retry(job_id=job.job_id, stage="review")
@@ -284,25 +308,16 @@ def test_reset_for_retry_from_review_clears_tail_artifacts_and_metadata(tmp_path
     assert (tmp_path / job.job_id / "01-source.md").is_file()
     assert (tmp_path / job.job_id / "02-translation.md").is_file()
     assert not (tmp_path / job.job_id / "03-reviewed.md").exists()
-    assert not (tmp_path / job.job_id / "04-route.json").exists()
-    assert not (tmp_path / job.job_id / "05-polished.md").exists()
-    assert not (tmp_path / job.job_id / "06-rewritten.md").exists()
-    assert not (tmp_path / job.job_id / "07-final-candidate.md").exists()
-    assert not (tmp_path / job.job_id / "08-final-check.json").exists()
-    assert not (tmp_path / job.job_id / "09-final-fixed.md").exists()
-    assert not (tmp_path / job.job_id / "final_check_after_fix.json").exists()
     assert not (tmp_path / job.job_id / "10-final.md").exists()
     assert not (tmp_path / job.job_id / "11-wechat.html").exists()
     assert "review" not in reset.stage_models
     assert "review" not in reset.stage_probes
-    assert "wechat-rewrite" not in reset.stage_models
-    assert "wechat-rewrite" not in reset.stage_probes
+    assert "render-html" not in reset.stage_models
     assert "review" not in reset.prompt_versions
-    assert "wechat-rewrite" not in reset.prompt_versions
     assert "review" not in reset.stage_durations
-    assert "wechat-rewrite" not in reset.stage_durations
+    assert "render-html" not in reset.stage_durations
     assert "review" not in reset.stage_errors
-    assert "wechat-rewrite" not in reset.stage_errors
+    assert "render-html" not in reset.stage_errors
 
 
 def test_update_stage_probe_persists_probe_result(tmp_path: Path) -> None:
@@ -311,18 +326,18 @@ def test_update_stage_probe_persists_probe_result(tmp_path: Path) -> None:
 
     updated = store.update_stage_probe(
         job_id=job.job_id,
-        stage="light-polish",
+        stage="review",
         status="passed",
         message="OK",
         checked_at="2026-05-04T12:00:00Z",
     )
 
-    assert updated.stage_probes["light-polish"].status == "passed"
-    assert updated.stage_probes["light-polish"].message == "OK"
-    assert updated.stage_probes["light-polish"].checked_at == "2026-05-04T12:00:00Z"
+    assert updated.stage_probes["review"].status == "passed"
+    assert updated.stage_probes["review"].message == "OK"
+    assert updated.stage_probes["review"].checked_at == "2026-05-04T12:00:00Z"
 
     reloaded = store.read_job(job.job_id)
-    assert reloaded.stage_probes["light-polish"].status == "passed"
+    assert reloaded.stage_probes["review"].status == "passed"
 
 
 def test_reset_for_retry_from_render_html_only_removes_html(tmp_path: Path) -> None:
@@ -873,7 +888,7 @@ def test_job_record_rejects_invalid_stage_errors_inner_shape() -> None:
         )
 
 
-@pytest.mark.parametrize("status", ["succeeded", "failed"])
+@pytest.mark.parametrize("status", ["succeeded", "failed", "published"])
 def test_job_record_requires_started_and_finished_at_for_terminal_states(status: str) -> None:
     with pytest.raises(ValidationError, match="terminal status requires started_at and finished_at"):
         JobRecord.model_validate(

@@ -85,6 +85,10 @@ h2 {
   text-align: left;
 }
 
+#output section > h2:not(:first-child) {
+  margin-top: 32px;
+}
+
 h3 {
   padding-left: 10px;
   border-left: 4px solid var(--md-primary-color);
@@ -135,7 +139,7 @@ p {
 
 blockquote {
   font-style: normal;
-  padding: 15px 0;
+  padding: 15px 12px;
   margin: 12px 0;
   border-left: 7px solid var(--md-accent-color);
   border-radius: 10px;
@@ -146,10 +150,11 @@ blockquote {
 blockquote > p {
   display: block;
   font-size: 1em;
-  letter-spacing: 0.1em;
+  letter-spacing: 0px;
   color: #3f3f3f;
   margin: 0;
   text-indent: 0;
+  line-height: 1.75;
 }
 
 pre.code__pre,
@@ -170,7 +175,7 @@ pre.code__pre,
 img {
   display: block;
   max-width: 100%;
-  margin: 0.1em auto 0.5em;
+  margin: 18px auto;
   border-radius: 10px;
 }
 

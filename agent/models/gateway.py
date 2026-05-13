@@ -66,6 +66,7 @@ class ModelGateway:
         model: str,
         system_prompt: str,
         user_prompt: str,
+        request_timeout_seconds: float | None = None,
     ) -> str:
         """对单个 Markdown 任务发起生成请求，并在可重试错误上自动重试。"""
         messages = build_messages(model=model, system_prompt=system_prompt, user_prompt=user_prompt)
@@ -74,6 +75,7 @@ class ModelGateway:
             model=model,
             messages=messages,
             temperature=0.3,
+            request_timeout_seconds=request_timeout_seconds,
         )
         return self._extract_content(response)
 
@@ -101,6 +103,7 @@ class ModelGateway:
         messages: list[dict[str, str]],
         temperature: float,
         max_tokens: int | None = None,
+        request_timeout_seconds: float | None = None,
     ):
         request: dict[str, object] = {
             "model": model,
@@ -113,7 +116,12 @@ class ModelGateway:
         for attempt in range(1, MAX_GENERATION_ATTEMPTS + 1):
             try:
                 with self._request_lock:
-                    response = self._client.chat.completions.create(**request)
+                    client = (
+                        self._client.with_options(timeout=request_timeout_seconds)
+                        if request_timeout_seconds is not None
+                        else self._client
+                    )
+                    response = client.chat.completions.create(**request)
                 break
             except RETRYABLE_ERRORS:
                 if attempt >= MAX_GENERATION_ATTEMPTS:

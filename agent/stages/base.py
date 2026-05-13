@@ -6,6 +6,7 @@ from agent.config import Settings
 from agent.jobs.store import JobStore
 from agent.models.gateway import ModelGateway
 from agent.prompts.loader import load_prompt
+from agent.stages.helpers import write_model_exchange_assets
 
 
 @dataclass(slots=True)
@@ -60,6 +61,7 @@ def run_markdown_stage(
     prompt_filename: str,
     model: str,
     build_input: Callable[[str], str],
+    trace_stage: str | None = None,
 ) -> str:
     """单次请求即可完成的标准 Markdown stage。"""
     source_markdown = read_stage_markdown(
@@ -67,11 +69,36 @@ def run_markdown_stage(
         context=context,
         relative_path=input_artifact,
     )
+    system_prompt = load_prompt(prompt_filename)
+    user_prompt = build_input(source_markdown)
+    if trace_stage:
+        write_model_exchange_assets(
+            store=store,
+            job_id=context.job_id,
+            stage=trace_stage,
+            call_id="call-001",
+            model=model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            raw_response=None,
+        )
+
     output_markdown = gateway.generate_markdown(
         model=model,
-        system_prompt=load_prompt(prompt_filename),
-        user_prompt=build_input(source_markdown),
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
     )
+    if trace_stage:
+        write_model_exchange_assets(
+            store=store,
+            job_id=context.job_id,
+            stage=trace_stage,
+            call_id="call-001",
+            model=model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            raw_response=output_markdown,
+        )
     store.write_artifact(
         job_id=context.job_id,
         relative_path=output_artifact,
@@ -92,6 +119,7 @@ def run_chunked_markdown_stage(
     build_input: Callable[[str], str],
     build_chunk_input: Callable[[str, ChunkPromptContext], str] | None = None,
     max_chars_per_request: int,
+    trace_stage: str | None = None,
 ) -> str:
     """对超长 Markdown 做分块调用，降低长请求被网关断开的概率。
 
@@ -109,6 +137,18 @@ def run_chunked_markdown_stage(
     for index, chunk in enumerate(chunks):
         chunk_context = ChunkPromptContext(chunk_index=index, chunk_count=len(chunks))
         user_prompt = build_chunk_input(chunk, chunk_context) if build_chunk_input else build_input(chunk)
+        call_id = f"call-{index + 1:03d}-of-{len(chunks):03d}"
+        if trace_stage:
+            write_model_exchange_assets(
+                store=store,
+                job_id=context.job_id,
+                stage=trace_stage,
+                call_id=call_id,
+                model=model,
+                system_prompt=prompt,
+                user_prompt=user_prompt,
+                raw_response=None,
+            )
         outputs.append(
             gateway.generate_markdown(
                 model=model,
@@ -116,6 +156,17 @@ def run_chunked_markdown_stage(
                 user_prompt=user_prompt,
             )
         )
+        if trace_stage:
+            write_model_exchange_assets(
+                store=store,
+                job_id=context.job_id,
+                stage=trace_stage,
+                call_id=call_id,
+                model=model,
+                system_prompt=prompt,
+                user_prompt=user_prompt,
+                raw_response=outputs[-1],
+            )
 
     if len(outputs) == 1:
         output_markdown = outputs[0]
@@ -144,19 +195,19 @@ def split_markdown_into_chunks(markdown: str, *, max_chars: int) -> list[str]:
         if not normalized_block:
             continue
 
-        block_text = normalized_block if not current else f"\n\n{normalized_block}"
-        if current and current_length + len(block_text) > max_chars:
-            chunks.append("\n\n".join(current))
-            current = [normalized_block]
-            current_length = len(normalized_block)
-            continue
-
         if len(normalized_block) > max_chars:
             if current:
                 chunks.append("\n\n".join(current))
                 current = []
                 current_length = 0
             chunks.extend(_split_large_block(normalized_block, max_chars=max_chars))
+            continue
+
+        block_text = normalized_block if not current else f"\n\n{normalized_block}"
+        if current and current_length + len(block_text) > max_chars:
+            chunks.append("\n\n".join(current))
+            current = [normalized_block]
+            current_length = len(normalized_block)
             continue
 
         current.append(normalized_block)
