@@ -16,6 +16,9 @@ coverage.xml
 # Virtual env
 .venv/
 
+# Local environment files
+.env
+
 # Local agent / tooling outputs
 .agents/
 .superpowers/

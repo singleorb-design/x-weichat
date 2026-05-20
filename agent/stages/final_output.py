@@ -185,11 +185,21 @@ def run_final_output(
                 user_prompt=user_prompt,
                 raw_response=None,
             )
-            candidate = gateway.generate_markdown(
-                model=fix_model,
-                system_prompt=prompt,
-                user_prompt=user_prompt,
-            )
+            try:
+                candidate = gateway.generate_markdown(
+                    model=fix_model,
+                    system_prompt=prompt,
+                    user_prompt=user_prompt,
+                    request_timeout_seconds=settings.targeted_fix_timeout_seconds,
+                )
+            except Exception as exc:
+                last_fix_error = f"{type(exc).__name__}: {exc}"
+                store.write_public_asset(
+                    job_id=context.job_id,
+                    relative_path=f"trace.assets/final-output-targeted-fix/{call_id}.error.txt",
+                    content=f"checked_at: {now_iso()}\nerror: {last_fix_error}\n",
+                )
+                continue
             write_model_exchange_assets(
                 store=store,
                 job_id=context.job_id,

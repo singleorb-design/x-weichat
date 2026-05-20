@@ -997,6 +997,94 @@ def test_final_output_enhances_fixed_markdown_before_second_check_and_final_arti
     assert store.read_artifact(job_id=job.job_id, relative_path="10-final.md") == final_markdown
 
 
+def test_final_output_falls_back_when_iterative_targeted_fix_request_fails(
+    tmp_path: Path,
+) -> None:
+    store = JobStore(root_dir=tmp_path)
+    settings = Settings(api_key="test-key", artifacts_dir=str(tmp_path))
+    job = store.create_job(url="https://x.com/a/status/1")
+    context = StageContext(job_id=job.job_id, url=job.url)
+    fixed_markdown = "# 如何将 AI 编码费用降低 50%–80%（实操指南）\n\n正文。"
+    second_check_response = json.dumps(
+        {
+            "pass": False,
+            "risk": "MEDIUM",
+            "fix_required": True,
+            "issues": [
+                {
+                    "type": "标题夸张或偏离正文",
+                    "severity": "MEDIUM",
+                    "detail": "标题仍需调整。",
+                    "fix_suggestion": "继续收敛标题。",
+                }
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+    class FailingFixGateway:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, str]] = []
+
+        def generate_markdown(
+            self,
+            *,
+            model: str,
+            system_prompt: str,
+            user_prompt: str,
+            request_timeout_seconds: float | None = None,
+        ) -> str:
+            del request_timeout_seconds
+            self.calls.append(
+                {
+                    "model": model,
+                    "system_prompt": system_prompt,
+                    "user_prompt": user_prompt,
+                }
+            )
+            if len(self.calls) == 1:
+                return second_check_response
+            raise RuntimeError("Range of input length should be [1, 8192]")
+
+    write_metadata_artifact(store, job_id=job.job_id)
+    write_route_artifact(store, job_id=job.job_id, decision="LIGHT_POLISH")
+    store.write_artifact(job_id=job.job_id, relative_path="05-polished.md", content="## 初始候选稿\n\n正文。")
+    write_final_check_artifact(
+        store,
+        job_id=job.job_id,
+        passed=False,
+        fix_required=True,
+        risk="MEDIUM",
+        issues=[
+            {
+                "type": "标题夸张或偏离正文",
+                "severity": "MEDIUM",
+                "detail": "标题过度承诺。",
+                "fix_suggestion": "修改标题。",
+            }
+        ],
+    )
+    store.write_artifact(job_id=job.job_id, relative_path="09-final-fixed.md", content=fixed_markdown)
+    gateway = FailingFixGateway()
+
+    final_markdown = run_final_output(
+        context=context,
+        store=store,
+        gateway=gateway,
+        settings=settings,
+    )
+
+    assert final_markdown == sanitize_publish_markdown(fixed_markdown)
+    assert store.read_artifact(job_id=job.job_id, relative_path="10-final.md") == final_markdown
+    fallback_text = (
+        store.get_job_dir(job.job_id)
+        / "final_output.assets"
+        / "targeted-fix"
+        / "round-2.fallback.txt"
+    ).read_text(encoding="utf-8")
+    assert "Range of input length should be [1, 8192]" in fallback_text
+
+
 def test_stage_runners_ignore_settings_artifacts_dir_for_input_reads(
     tmp_path: Path,
     monkeypatch,
