@@ -17,7 +17,6 @@ import {
   getDiscoveryRun,
   getJob,
   getPromptText,
-  getWeChatPublishRun,
   listJobs,
   listTrashedJobs,
   previewDiscovery,
@@ -25,7 +24,6 @@ import {
   restoreJob,
   runJob,
   setJobPublished,
-  startWeChatPublish,
   startDiscoveryLogin,
   stopDiscoveryRun,
   stopJob,
@@ -35,11 +33,18 @@ import { ArtifactTabs } from './components/ArtifactTabs'
 import { HtmlPreview } from './components/HtmlPreview'
 import { JobForm } from './components/JobForm'
 import { JobPrompts, JobStatus } from './components/JobStatus'
-import type { ArtifactKey, DiscoveryPreviewItem, DiscoveryRunStatusResponse, JobRecord, StageName, XLoginRunStatusResponse } from './types'
+import type {
+  ArtifactKey,
+  DiscoveryPreviewItem,
+  DiscoveryRunStatusResponse,
+  JobRecord,
+  StageName,
+  XLoginRunStatusResponse,
+} from './types'
 
 type PreviewArtifactKey = Exclude<ArtifactKey, 'html'>
 type ProgressStepStatus = 'pending' | 'active' | 'completed' | 'failed'
-type JobListSegment = 'needs_action' | 'all' | 'succeeded' | 'canceled' | 'trash'
+type JobListSegment = 'needs_action' | 'all' | 'succeeded' | 'published' | 'canceled' | 'trash'
 type JobListSort = 'newest' | 'oldest'
 
 interface ProgressStep {
@@ -374,6 +379,29 @@ function buildJobListTitle(job: JobRecord): string {
   }
 }
 
+function tokenizeJobListQuery(query: string): string[] {
+  return query
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+}
+
+function buildJobListSearchText(job: JobRecord): string {
+  const stageLabel = job.current_stage ? STAGE_LABELS[job.current_stage] : ''
+  return [
+    job.source_title ?? '',
+    job.url ?? '',
+    job.job_id ?? '',
+    job.status ?? '',
+    job.current_stage ?? '',
+    stageLabel,
+    job.created_at ?? '',
+  ]
+    .join(' ')
+    .toLowerCase()
+}
+
 function isArtifactReady(job: JobRecord | null, artifactKey: PreviewArtifactKey): boolean {
   if (!job || job.status === 'pending') {
     return false
@@ -459,10 +487,6 @@ export default function App() {
   const [htmlPreviewBusy, setHtmlPreviewBusy] = useState(false)
   const [htmlPreviewError, setHtmlPreviewError] = useState<string | null>(null)
 
-  const [wechatPublishRunId, setWeChatPublishRunId] = useState<string | null>(null)
-  const [wechatPublishBusy, setWeChatPublishBusy] = useState(false)
-  const [wechatPublishMessage, setWeChatPublishMessage] = useState<string | null>(null)
-  const [wechatPublishError, setWeChatPublishError] = useState<string | null>(null)
   const [finalHtmlModalJob, setFinalHtmlModalJob] = useState<JobRecord | null>(null)
   const [copiedJobId, setCopiedJobId] = useState<string | null>(null)
   const [finalMarkdownDraft, setFinalMarkdownDraft] = useState('')
@@ -657,6 +681,7 @@ export default function App() {
       needs_action: 0,
       all: jobs.length,
       succeeded: 0,
+      published: 0,
       canceled: 0,
       trash: trashJobs.length,
     }
@@ -666,6 +691,9 @@ export default function App() {
       }
       if (item.status === 'succeeded') {
         counts.succeeded += 1
+      }
+      if (item.status === 'published') {
+        counts.published += 1
       }
       if (item.status === 'canceled') {
         counts.canceled += 1
@@ -677,19 +705,41 @@ export default function App() {
   const hasAnyJobs = jobs.length > 0 || trashJobs.length > 0
   const activeListError = jobListSegment === 'trash' ? trashError : jobsError
 
+  const jobListSourceCount = useMemo(() => {
+    const source = jobListSegment === 'trash' ? trashJobs : jobs
+    const matchesSegment = (job: JobRecord) => {
+      if (jobListSegment === 'trash') {
+        return true
+      }
+      if (jobListSegment === 'all') {
+        return true
+      }
+      if (jobListSegment === 'needs_action') {
+        return job.status === 'running' || job.status === 'failed'
+      }
+      if (jobListSegment === 'succeeded') {
+        return job.status === 'succeeded'
+      }
+      if (jobListSegment === 'published') {
+        return job.status === 'published'
+      }
+      return job.status === 'canceled'
+    }
+
+    return source.filter(matchesSegment).length
+  }, [jobListSegment, jobs, trashJobs])
+
   const visibleJobs = useMemo(() => {
-    const normalizedQuery = jobListQuery.trim().toLowerCase()
+    const queryTokens = tokenizeJobListQuery(jobListQuery)
 
     const source = jobListSegment === 'trash' ? trashJobs : jobs
 
     const matchesQuery = (job: JobRecord) => {
-      if (!normalizedQuery) {
+      if (queryTokens.length === 0) {
         return true
       }
-      const haystack = [job.source_title ?? '', job.url ?? '', job.job_id ?? '', job.current_stage ?? '']
-        .join(' ')
-        .toLowerCase()
-      return haystack.includes(normalizedQuery)
+      const haystack = buildJobListSearchText(job)
+      return queryTokens.every((token) => haystack.includes(token))
     }
 
     const matchesSegment = (job: JobRecord) => {
@@ -703,7 +753,10 @@ export default function App() {
         return job.status === 'running' || job.status === 'failed'
       }
       if (jobListSegment === 'succeeded') {
-        return job.status === 'succeeded' || job.status === 'published'
+        return job.status === 'succeeded'
+      }
+      if (jobListSegment === 'published') {
+        return job.status === 'published'
       }
       return job.status === 'canceled'
     }
@@ -732,7 +785,7 @@ export default function App() {
     })
 
     return result
-  }, [jobId, jobListQuery, jobListSegment, jobListSort, jobs, trashJobs])
+  }, [jobListQuery, jobListSegment, jobListSort, jobs, trashJobs])
   const discoveryProgress = discoveryStatus?.progress_json ?? {}
   const discoveryLoginProgress = discoveryLoginStatus?.progress_json ?? {}
   const discoveryReasonText = formatDiscoverySuspectedReason(discoveryProgress.suspected_reason, discoveryProgress)
@@ -873,45 +926,7 @@ export default function App() {
     setHtmlPreviewUrl(null)
     setHtmlPreviewBusy(false)
     setHtmlPreviewError(null)
-
-    setWeChatPublishRunId(null)
-    setWeChatPublishBusy(false)
-    setWeChatPublishMessage(null)
-    setWeChatPublishError(null)
   }, [jobId])
-
-  useEffect(() => {
-    if (!wechatPublishRunId) {
-      return
-    }
-
-    let cancelled = false
-    const timer = window.setInterval(() => {
-      void getWeChatPublishRun(wechatPublishRunId)
-        .then((status) => {
-          if (cancelled) {
-            return
-          }
-          setWeChatPublishMessage(status.progress_message ?? null)
-          setWeChatPublishError(status.error_message ?? null)
-          if (status.completed) {
-            window.clearInterval(timer)
-            setWeChatPublishBusy(false)
-          }
-        })
-        .catch((error) => {
-          if (cancelled) {
-            return
-          }
-          setWeChatPublishError(error instanceof Error ? error.message : '公众号发布状态读取失败')
-        })
-    }, 1000)
-
-    return () => {
-      cancelled = true
-      window.clearInterval(timer)
-    }
-  }, [wechatPublishRunId])
 
   const handleDeleteJob = async (targetJob: JobRecord) => {
     if (deletingJobIdsRef.current.has(targetJob.job_id)) {
@@ -1527,26 +1542,6 @@ export default function App() {
       setHtmlPreviewError(error instanceof Error ? error.message : '生成 HTML 预览失败')
     } finally {
       setHtmlPreviewBusy(false)
-    }
-  }
-
-  const handleWeChatPublishDraft = async () => {
-    if (!jobId) {
-      return
-    }
-    if (wechatPublishBusy) {
-      return
-    }
-
-    setWeChatPublishBusy(true)
-    setWeChatPublishError(null)
-    setWeChatPublishMessage('正在启动发布：将打开公众号后台，请在弹出的浏览器中完成登录')
-    try {
-      const accepted = await startWeChatPublish({ job_id: jobId, html_artifact: '11-wechat.html' })
-      setWeChatPublishRunId(accepted.run_id)
-    } catch (error) {
-      setWeChatPublishError(error instanceof Error ? error.message : '启动公众号发布失败')
-      setWeChatPublishBusy(false)
     }
   }
 
@@ -2431,14 +2426,42 @@ export default function App() {
             {!hasAnyJobs && !activeListError ? <p className="muted">暂无任务记录。</p> : null}
             {hasAnyJobs ? (
               <div className="job-list-toolbar">
-                <label className="job-list-search">
-                  <span className="muted">搜索</span>
-                  <input
-                    value={jobListQuery}
-                    onChange={(event) => setJobListQuery(event.target.value)}
-                    placeholder="按标题 / URL / job_id / 阶段搜索"
-                  />
-                </label>
+                <div className="job-list-search-row">
+                  <label className="job-list-search" htmlFor="job-list-search">
+                    <span className="muted">搜索</span>
+                    <input
+                      id="job-list-search"
+                      className="job-list-control-field"
+                      name="job_list_search"
+                      type="search"
+                      value={jobListQuery}
+                      onChange={(event) => setJobListQuery(event.target.value)}
+                      placeholder="按标题 / URL / job_id / 状态 / 阶段搜索"
+                    />
+                  </label>
+                  {jobListQuery.trim() ? (
+                    <button type="button" className="job-list-clear" onClick={() => setJobListQuery('')}>
+                      清空搜索
+                    </button>
+                  ) : null}
+                  <label className="job-list-sort">
+                    <span className="muted">排序</span>
+                    <select
+                      className="job-list-control-field"
+                      value={jobListSort}
+                      onChange={(event) => setJobListSort(event.target.value as JobListSort)}
+                    >
+                      <option value="newest">最新优先</option>
+                      <option value="oldest">最早优先</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="job-list-toolbar-meta">
+                  <span>
+                    显示 {visibleJobs.length} / {jobListSourceCount} 个任务
+                  </span>
+                  {jobListQuery.trim() ? <span>关键词：{tokenizeJobListQuery(jobListQuery).join(' / ')}</span> : null}
+                </div>
                 <div className="tabs" role="tablist" aria-label="任务筛选">
                   <button
                     type="button"
@@ -2463,6 +2486,13 @@ export default function App() {
                   </button>
                   <button
                     type="button"
+                    className={jobListSegment === 'published' ? 'tab active' : 'tab'}
+                    onClick={() => setJobListSegment('published')}
+                  >
+                    已发布（{jobListStats.published}）
+                  </button>
+                  <button
+                    type="button"
                     className={jobListSegment === 'canceled' ? 'tab active' : 'tab'}
                     onClick={() => setJobListSegment('canceled')}
                   >
@@ -2476,13 +2506,6 @@ export default function App() {
                     回收站（{jobListStats.trash}）
                   </button>
                 </div>
-                <label className="job-list-sort">
-                  <span className="muted">排序</span>
-                  <select value={jobListSort} onChange={(event) => setJobListSort(event.target.value as JobListSort)}>
-                    <option value="newest">最新优先</option>
-                    <option value="oldest">最早优先</option>
-                  </select>
-                </label>
               </div>
             ) : null}
             {hasAnyJobs ? (
@@ -2490,7 +2513,7 @@ export default function App() {
                 {visibleJobs.length === 0 ? (
                   <li className="job-list-empty">
                     <p className="muted" style={{ margin: 0 }}>
-                      没有匹配的任务。
+                      {jobListQuery.trim() ? `没有匹配“${jobListQuery.trim()}”的任务。` : '没有匹配的任务。'}
                     </p>
                   </li>
                 ) : null}
@@ -2914,12 +2937,6 @@ export default function App() {
           setHtmlPreviewError(null)
         }}
         onGenerate={() => void handleGenerateHtmlPreview()}
-
-        publishEnabled={Boolean(jobId && job && (job.status === 'succeeded' || job.status === 'published'))}
-        publishBusy={wechatPublishBusy}
-        publishError={wechatPublishError}
-        publishMessage={wechatPublishMessage}
-        onPublish={() => void handleWeChatPublishDraft()}
       />
 
       {finalHtmlModalJob && finalHtmlModalUrl ? (

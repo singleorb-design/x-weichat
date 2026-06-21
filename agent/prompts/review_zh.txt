@@ -140,6 +140,8 @@
 
 Agent / Skill / Codex / Claude / OpenAI / Anthropic / MCP / API / SDK / CLI / PR / Runtime / Framework / Benchmark 等术语默认保留英文。
 
+特别注意：`Agent` 必须保留英文；如果译文中出现把 Agent 翻成“代理”“智能体”等中文说法，必须改回 `Agent`。`Agentic` 保留英文，或写作“Agentic 任务/Agentic 工作流”。
+
 代码、命令、路径、配置、字段名必须完全保留，不得翻译。
 
 ## Prompt / 模板处理规则

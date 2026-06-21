@@ -158,9 +158,41 @@ def sanitize_publish_markdown(markdown: str) -> str:
         normalized,
         flags=re.MULTILINE,
     )
+    normalized = strip_markdown_horizontal_rules(normalized).strip()
     normalized = re.sub(r"^#\s+", "## ", normalized, flags=re.MULTILINE)
     normalized = re.sub(r"\n{3,}", "\n\n", normalized).strip()
     return normalized + "\n"
+
+
+def strip_markdown_horizontal_rules(markdown: str) -> str:
+    normalized = markdown.replace("\r\n", "\n").replace("\r", "\n")
+    lines = normalized.split("\n")
+    kept: list[str] = []
+    in_fence = False
+    fence_marker: str | None = None
+
+    for line in lines:
+        stripped = line.strip()
+        fence_match = re.match(r"^(```+|~~~+)", stripped)
+        if fence_match:
+            marker = fence_match.group(1)
+            if not in_fence:
+                in_fence = True
+                fence_marker = marker[:3]
+            elif fence_marker and marker.startswith(fence_marker):
+                in_fence = False
+                fence_marker = None
+            kept.append(line)
+            continue
+
+        if not in_fence:
+            if re.fullmatch(r"(?:-{3,}|\*{3,}|_{3,})", stripped):
+                continue
+            line = re.sub(r"^(\s*(?:>\s*)?)[✦✧◆◇●○★☆]\s+", r"\1", line)
+
+        kept.append(line)
+
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(kept))
 
 
 def enhance_readability_markdown(markdown: str) -> str:

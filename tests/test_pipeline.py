@@ -416,6 +416,32 @@ def test_light_polish_stage_splits_large_markdown_into_multiple_requests(
     assert all("【元信息】" in prompt and "【Review 后译文】" in prompt for prompt in chunks_seen)
 
 
+def test_light_polish_stage_removes_model_added_horizontal_rules(tmp_path: Path) -> None:
+    store = JobStore(root_dir=tmp_path)
+    settings = Settings(api_key="test-key", artifacts_dir=str(tmp_path))
+    reviewed = "# 标题\n\n## 第一节\n\n正文。"
+    job = store.create_job(url="https://x.com/a/status/1")
+    context = StageContext(job_id=job.job_id, url=job.url)
+    store.write_artifact(job_id=context.job_id, relative_path="03-reviewed.md", content=reviewed)
+    write_route_artifact(store, job_id=context.job_id, decision="LIGHT_POLISH")
+    write_metadata_artifact(store, job_id=context.job_id)
+
+    class HorizontalRuleGateway:
+        def generate_markdown(self, *, model: str, system_prompt: str, user_prompt: str) -> str:
+            return "# 标题\n\n---\n\n## 第一节\n\n正文。\n\n> ✦ 引用重点。\n\n```txt\n---\n✦ keep\n```"
+
+    output = run_light_polish(
+        context=context,
+        store=store,
+        gateway=HorizontalRuleGateway(),
+        settings=settings,
+    )
+
+    expected = "# 标题\n\n## 第一节\n\n正文。\n\n> 引用重点。\n\n```txt\n---\n✦ keep\n```"
+    assert output == expected
+    assert store.read_artifact(job_id=context.job_id, relative_path="05-polished.md") == expected
+
+
 def test_light_polish_stage_retries_with_smaller_chunks_when_large_chunk_output_is_truncated(
     tmp_path: Path,
     monkeypatch,

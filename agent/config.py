@@ -24,12 +24,6 @@ class Settings(BaseSettings):
     api_key: str = Field(default="", repr=False)
     artifacts_dir: str = "artifacts"
     x_storage_state_path: str | None = None
-
-    # WeChat Official Account (mp.weixin.qq.com) browser automation.
-    # This mirrors the X login flow: a user completes login in a real browser window and we
-    # persist Playwright `storage_state` for later reuse.
-    wechat_mp_storage_state_path: str | None = None
-    wechat_mp_login_browser_path: str | None = None
     model_translate: str = Field(
         default="qwen-mt-plus",
     )
@@ -96,18 +90,6 @@ class Settings(BaseSettings):
     @field_validator("x_storage_state_path")
     @classmethod
     def validate_x_storage_state_path(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-
-        normalized = value.strip()
-        if not normalized:
-            return None
-
-        return normalized
-
-    @field_validator("wechat_mp_storage_state_path", "wechat_mp_login_browser_path")
-    @classmethod
-    def validate_optional_path(cls, value: str | None) -> str | None:
         if value is None:
             return None
 

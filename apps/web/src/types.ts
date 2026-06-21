@@ -220,30 +220,6 @@ export interface XLoginRunStatusResponse {
   completed: boolean
 }
 
-export type WeChatPublishRunStatus = 'pending' | 'running' | 'succeeded' | 'failed'
-export type WeChatPublishRunPhase = 'starting_browser' | 'awaiting_login' | 'opening_editor' | 'filling_content' | 'saving_draft' | 'completed'
-
-export interface StartWeChatPublishRequest {
-  job_id: string
-  title?: string | null
-  html_artifact?: string
-}
-
-export interface WeChatPublishAcceptedResponse {
-  run_id: string
-  status: WeChatPublishRunStatus
-}
-
-export interface WeChatPublishRunStatusResponse {
-  run_id: string
-  status: WeChatPublishRunStatus
-  current_phase: WeChatPublishRunPhase | null
-  progress_message: string | null
-  progress_json: Record<string, unknown>
-  error_message: string | null
-  completed: boolean
-}
-
 export interface DiscoveryEnqueueRequest {
   run_id: string
   selected_urls: string[]

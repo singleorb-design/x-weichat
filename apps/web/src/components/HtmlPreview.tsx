@@ -10,12 +10,6 @@ interface HtmlPreviewProps {
   stageError: string | null
   onStageChange: (stage: string) => void
   onGenerate: () => void
-
-  publishEnabled?: boolean
-  publishBusy?: boolean
-  publishError?: string | null
-  publishMessage?: string | null
-  onPublish?: () => void
 }
 
 export function HtmlPreview({
@@ -30,11 +24,6 @@ export function HtmlPreview({
   stageError,
   onStageChange,
   onGenerate,
-  publishEnabled = false,
-  publishBusy = false,
-  publishError = null,
-  publishMessage = null,
-  onPublish,
 }: HtmlPreviewProps) {
   return (
     <section className="card">
@@ -61,15 +50,6 @@ export function HtmlPreview({
           <button type="button" className="preview-generate" onClick={onGenerate} disabled={stageBusy || !ready}>
             {stageBusy ? '生成中…' : '生成预览'}
           </button>
-          <button
-            type="button"
-            className="preview-generate"
-            onClick={onPublish}
-            disabled={!publishEnabled || publishBusy || stageBusy || !ready}
-            title={publishEnabled ? '打开公众号后台并尝试保存草稿' : '需要先生成最终 HTML（11-wechat.html）'}
-          >
-            {publishBusy ? '发布中…' : '发布到公众号草稿'}
-          </button>
           {ready && htmlUrl && expanded ? (
             <a className="preview-link" href={htmlUrl} target="_blank" rel="noreferrer noopener">
               新标签全屏预览
@@ -94,8 +74,6 @@ export function HtmlPreview({
         </p>
       ) : null}
       {stageError ? <p className="error">{stageError}</p> : null}
-      {publishError ? <p className="error">{publishError}</p> : null}
-      {publishMessage ? <p className="muted">{publishMessage}</p> : null}
       {expanded ? (
         !ready || !htmlUrl ? (
           <p className="muted">选择阶段后点击“生成预览”，HTML 会显示在这里。</p>

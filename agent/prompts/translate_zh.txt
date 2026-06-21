@@ -81,6 +81,11 @@ TerminalBench
 
 Agent, Skill, Codex, Claude, MCP, Prompt, Harness, Workflow, Context, Token, Tool, Subagent, ReAct, RAG, PR, CLI, API, SDK, Diff, Commit, Runtime, Framework, Benchmark
 
+特别注意：
+
+- `Agent` 必须保留英文，不要翻译成“代理”“智能体”或其他中文说法。
+- `Agentic` 必须保留英文或写作“Agentic 任务/Agentic 工作流”，不要翻译成“代理式”“智能体式”。
+
 以下内容必须原样保留（必要时用反引号）：
 
 description

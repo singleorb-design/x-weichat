@@ -18,9 +18,6 @@ import type {
   StageHtmlPreviewRequest,
   StageHtmlPreviewResponse,
   UpdateFinalMarkdownResponse,
-  StartWeChatPublishRequest,
-  WeChatPublishAcceptedResponse,
-  WeChatPublishRunStatusResponse,
   XLoginRunAcceptedResponse,
   XLoginRunStatusResponse,
 } from './types'
@@ -325,22 +322,4 @@ export async function enqueueDiscovery(payload: DiscoveryEnqueueRequest): Promis
     body: JSON.stringify(payload),
   })
   return parseJson<DiscoveryEnqueueResponse>(response)
-}
-
-export async function startWeChatPublish(payload: StartWeChatPublishRequest): Promise<WeChatPublishAcceptedResponse> {
-  const response = await fetchWithTimeout('/api/wechat/publish/start', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-    timeoutMs: 10_000,
-    timeoutMessage: '启动发布超时：请确认后端服务已启动。',
-  })
-  return parseJson<WeChatPublishAcceptedResponse>(response)
-}
-
-export async function getWeChatPublishRun(runId: string): Promise<WeChatPublishRunStatusResponse> {
-  const response = await fetchWithTimeout(`/api/wechat/publish/runs/${runId}`)
-  return parseJson<WeChatPublishRunStatusResponse>(response)
 }

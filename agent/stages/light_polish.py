@@ -5,7 +5,13 @@ from agent.jobs.store import JobStore
 from agent.models.gateway import ModelGateway
 from agent.prompts.loader import load_prompt
 from agent.stages.base import ChunkPromptContext, StageContext, read_stage_markdown, run_chunked_markdown_stage
-from agent.stages.helpers import dump_json, is_substantially_shorter, load_route_payload, read_json_artifact
+from agent.stages.helpers import (
+    dump_json,
+    is_substantially_shorter,
+    load_route_payload,
+    read_json_artifact,
+    strip_markdown_horizontal_rules,
+)
 
 
 # 轻编辑必须保留全文信息，但输出通常与输入等长；超长文章改为分块可降低尾段丢失概率。
@@ -83,6 +89,14 @@ def run_light_polish(
             max_chars_per_request=chunk_size,
             trace_stage="light-polish",
         )
+        cleaned_markdown = strip_markdown_horizontal_rules(polished_markdown).strip()
+        if cleaned_markdown != polished_markdown.strip():
+            polished_markdown = cleaned_markdown
+            store.write_artifact(
+                job_id=context.job_id,
+                relative_path="05-polished.md",
+                content=polished_markdown,
+            )
         if not is_substantially_shorter(
             reviewed_markdown,
             polished_markdown,

@@ -213,6 +213,7 @@ describe('App', () => {
     expect(container.textContent).toContain('任务列表')
     expect(container.textContent).toContain('任务状态')
     expect(container.textContent).toContain('HTML 预览')
+    expect(container.textContent).not.toContain('发布到公众号草稿')
   })
 
   it('opens artifact preview by default after selecting a job while keeping html preview collapsed', async () => {
@@ -506,6 +507,150 @@ describe('App', () => {
     await selectJobListSegment(container, '全部')
     expect(container.textContent).toContain('job-done')
     expect(container.textContent).toContain('succeeded')
+  })
+
+  it('shows published jobs in a dedicated tab separate from succeeded jobs', async () => {
+    fetchMock.mockImplementation((input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      const promptResponse = maybePromptResponse(url)
+      if (promptResponse) {
+        return Promise.resolve(promptResponse)
+      }
+
+      if (url === '/api/jobs') {
+        return Promise.resolve(
+          jsonResponse([
+            {
+              job_id: 'job-published',
+              url: 'https://x.com/alice/status/100',
+              created_at: '2026-05-03T00:00:00Z',
+              status: 'published',
+              current_stage: 'render-html',
+              started_at: '2026-05-03T00:00:01Z',
+              finished_at: '2026-05-03T00:01:00Z',
+              stage_models: {},
+              prompt_versions: {},
+              stage_durations: {},
+              stage_errors: {},
+            },
+            {
+              job_id: 'job-succeeded',
+              url: 'https://x.com/bob/status/200',
+              created_at: '2026-05-02T00:00:00Z',
+              status: 'succeeded',
+              current_stage: 'render-html',
+              started_at: '2026-05-02T00:00:01Z',
+              finished_at: '2026-05-02T00:01:00Z',
+              stage_models: {},
+              prompt_versions: {},
+              stage_durations: {},
+              stage_errors: {},
+            },
+          ]),
+        )
+      }
+
+      throw new Error(`unexpected request: GET ${url}`)
+    })
+
+    await act(async () => {
+      root.render(<App />)
+      await flushMicrotasks()
+    })
+
+    expect(container.textContent).toContain('已发布（1）')
+
+    await selectJobListSegment(container, '成功')
+    let jobItems = Array.from(container.querySelectorAll('.job-list-item'))
+    expect(jobItems.some((item) => item.textContent?.includes('job-succeeded'))).toBe(true)
+    expect(jobItems.some((item) => item.textContent?.includes('job-published'))).toBe(false)
+
+    await selectJobListSegment(container, '已发布')
+    jobItems = Array.from(container.querySelectorAll('.job-list-item'))
+    expect(jobItems.some((item) => item.textContent?.includes('job-published'))).toBe(true)
+    expect(jobItems.some((item) => item.textContent?.includes('job-succeeded'))).toBe(false)
+  })
+
+  it('filters the job list by multiple search terms and can clear the query', async () => {
+    fetchMock.mockImplementation((input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      const promptResponse = maybePromptResponse(url)
+      if (promptResponse) {
+        return Promise.resolve(promptResponse)
+      }
+
+      if (url === '/api/jobs') {
+        return Promise.resolve(
+          jsonResponse([
+            {
+              job_id: 'job-alice',
+              url: 'https://x.com/alice/status/1',
+              source_title: 'Alice Agent Notes',
+              created_at: '2026-05-03T00:00:00Z',
+              status: 'succeeded',
+              current_stage: 'render-html',
+              started_at: '2026-05-03T00:00:01Z',
+              finished_at: '2026-05-03T00:01:00Z',
+              stage_models: {},
+              prompt_versions: {},
+              stage_durations: {},
+              stage_errors: {},
+            },
+            {
+              job_id: 'job-bob',
+              url: 'https://x.com/bob/status/2',
+              source_title: 'Bob Pipeline Notes',
+              created_at: '2026-05-02T00:00:00Z',
+              status: 'failed',
+              current_stage: 'review',
+              started_at: '2026-05-02T00:00:01Z',
+              finished_at: '2026-05-02T00:01:00Z',
+              stage_models: {},
+              prompt_versions: {},
+              stage_durations: {},
+              stage_errors: {},
+            },
+          ]),
+        )
+      }
+
+      throw new Error(`unexpected request: GET ${url}`)
+    })
+
+    await act(async () => {
+      root.render(<App />)
+      await flushMicrotasks()
+    })
+
+    const searchInput = container.querySelector('input[name="job_list_search"]') as HTMLInputElement | null
+    expect(searchInput).not.toBeNull()
+    const searchRow = container.querySelector('.job-list-search-row')
+    const sortSelect = container.querySelector('.job-list-search-row select') as HTMLSelectElement | null
+    expect(searchRow).not.toBeNull()
+    expect(sortSelect).not.toBeNull()
+    expect(searchInput!.classList.contains('job-list-control-field')).toBe(true)
+    expect(sortSelect!.classList.contains('job-list-control-field')).toBe(true)
+
+    await act(async () => {
+      updateInputValue(searchInput!, 'alice succeeded')
+      await flushMicrotasks()
+    })
+
+    expect(container.textContent).toContain('显示 1 / 2 个任务')
+    expect(container.textContent).toContain('job-alice')
+    expect(container.textContent).not.toContain('job-bob')
+
+    const clearButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === '清空搜索')
+    expect(clearButton).toBeDefined()
+    await act(async () => {
+      clearButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await flushMicrotasks()
+    })
+
+    expect(searchInput!.value).toBe('')
+    expect(container.textContent).toContain('显示 2 / 2 个任务')
+    expect(container.textContent).toContain('job-alice')
+    expect(container.textContent).toContain('job-bob')
   })
 
   it('polls discovery progress, renders candidates, and auto-runs selected jobs after enqueue', async () => {
